@@ -2599,3 +2599,19 @@ TEST_CASE("bad boss cutscene messages are refused") {
   b[kHeaderSize + 3] = 81;  // max life (u32 little end first byte)
   CHECK(decode(b, back) == Error::bad_value);
 }
+
+TEST_CASE("codec: MOD_DATA (492): a mod's small value under a key, the bytes as they are") {
+  const ModData skin{2, "coop", "skin", {'M', 'a', 'l', 'o', 'n', 0, 0xAB, 0xCD}};
+  const Bytes b = must_encode(skin);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(std::get<ModData>(back) == skin);
+  CHECK(type_of(back) == MessageType::mod_data);
+  std::vector<std::uint8_t> out;
+  CHECK(encode(ModData{0, "coop", "", {1}}, out) == Error::bad_value);                    // no key
+  CHECK(encode(ModData{0, "coop", "Skin", {1}}, out) == Error::bad_value);                // [a-z0-9_] only
+  CHECK(encode(ModData{0, "coop", std::string(33, 'k'), {1}}, out) == Error::bad_value);  // key too long
+  CHECK(encode(ModData{0, "Coop", "skin", {1}}, out) == Error::bad_value);                // not a mod id
+  CHECK(encode(ModData{0, "coop", "skin", std::vector<std::uint8_t>(65, 1)}, out) == Error::bad_value);
+  CHECK(encode(ModData{0, "coop", "skin", std::vector<std::uint8_t>(64, 1)}, out) == Error::none);
+}

@@ -435,6 +435,13 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
     }
   }
   if (mod_settings_) send(id, kChannelSession, *mod_settings_);
+  // Mod data: everyone else's values (issue 250 (1)).
+  for (const auto& entry : connections_) {
+    if (entry.first == id || entry.second.state != State::joined) continue;
+    for (const ModData& value : entry.second.mod_data) {
+      send(id, kChannelSession, value);
+    }
+  }
   // The Lobby: who the host muted (the joiner too, when it was muted before
   // it left); the others learn it of the joiner.
   for (const auto& entry : connections_) {
@@ -540,6 +547,10 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
   }
   if (std::holds_alternative<ModList>(message) || std::holds_alternative<ModSettings>(message)) {
     on_mods(id, c, message);
+    return;
+  }
+  if (std::holds_alternative<ModData>(message)) {
+    on_mod_data(id, c, message);
     return;
   }
   if (std::holds_alternative<PvpHit>(message)) {
@@ -748,6 +759,41 @@ void Session::on_mods(ConnectionId id, Connection& c, Message& message) {
   } else {
     mod_settings_ = std::get<ModSettings>(message);
   }
+  send_to_others(id, kChannelSession, message);
+  ++stats_.relayed;
+}
+
+// Mod data (docs/protocol.md, "Mod data"; issue 250 (1)): the sender's own value, kept as the newest per
+// mod and key, passed on to the others; an empty value clears the key. Limits per player: kMaxModDataKeys
+// keys per mod, kMaxModDataMods mods, kModDataPerSecond sends a second. The bytes are never read.
+void Session::on_mod_data(ConnectionId id, Connection& c, Message& message) {
+  if (c.mod_data_in_window >= kModDataPerSecond) {
+    ++stats_.mod_data_refused;
+    return;
+  }
+  set_sender(message, c.number);
+  const ModData& data = std::get<ModData>(message);
+  auto it = std::find_if(c.mod_data.begin(), c.mod_data.end(), [&](const ModData& d) {
+    return d.mod_id == data.mod_id && d.key == data.key;
+  });
+  if (data.value.empty()) {
+    if (it != c.mod_data.end()) c.mod_data.erase(it);
+  } else if (it != c.mod_data.end()) {
+    *it = data;
+  } else {
+    std::size_t keys = 0;
+    std::set<std::string> mods;
+    for (const ModData& d : c.mod_data) {
+      mods.insert(d.mod_id);
+      if (d.mod_id == data.mod_id) ++keys;
+    }
+    if (keys >= kMaxModDataKeys || (mods.count(data.mod_id) == 0 && mods.size() >= kMaxModDataMods)) {
+      ++stats_.mod_data_refused;
+      return;
+    }
+    c.mod_data.push_back(data);
+  }
+  ++c.mod_data_in_window;
   send_to_others(id, kChannelSession, message);
   ++stats_.relayed;
 }
@@ -2466,6 +2512,13 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
 }
 
 void Session::tick(std::uint64_t now_us) {
+  // MOD_DATA's sends a second: a new count each second.
+  for (auto& [id, c] : connections_) {
+    if (now_us - c.mod_data_window_us >= 1'000'000) {
+      c.mod_data_window_us = now_us;
+      c.mod_data_in_window = 0;
+    }
+  }
   // Wrong-password counts whose window and block are both over.
   for (auto it = wrong_guesses_.begin(); it != wrong_guesses_.end();) {
     const WrongGuesses& g = it->second;

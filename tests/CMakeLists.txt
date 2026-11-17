@@ -148,6 +148,7 @@ add_executable(coop_tests
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina_sound.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_look_share.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_mod_data.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_voice.cpp
   lichii/voice_test.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_puppet_sound.cpp

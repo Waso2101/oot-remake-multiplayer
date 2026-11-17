@@ -319,6 +319,7 @@ struct Stats {
   std::uint64_t dbno_revives_dropped = 0;  // mode off, to nobody, or to themselves
   std::uint64_t difficulty_refused = 0;  // DIFFICULTY from a player who does not host
   std::uint64_t mod_settings_refused = 0;  // MOD_SETTINGS from a player who does not host
+  std::uint64_t mod_data_refused = 0;      // MOD_DATA over a limit (too many keys, mods or sends a second)
   // The Lobby (docs/protocol.md "Lobby"): the host's kicks, bans and mutes.
   std::uint64_t lobby_done = 0;      // LOBBY_ACTIONs carried out
   std::uint64_t lobby_refused = 0;   // LOBBY_ACTION from a player who does not host
@@ -431,6 +432,9 @@ struct Stats {
   std::uint64_t dropped() const;
 };
 
+// MOD_DATA a player may send each second; more are dropped (issue 250 (1)).
+inline constexpr std::uint32_t kModDataPerSecond = 4;
+
 class Session {
  public:
   explicit Session(SessionConfig config = {});
@@ -524,6 +528,11 @@ class Session {
     std::string nickname;
     // Its last MOD_LIST, with its number (docs/protocol.md, "Mods").
     std::optional<protocol::ModList> mods;
+    // Its MOD_DATA values, the newest per mod and key, with its number (docs/protocol.md, "Mod data").
+    std::vector<protocol::ModData> mod_data;
+    // MOD_DATA taken in the current second (at most kModDataPerSecond).
+    std::uint64_t mod_data_window_us = 0;
+    std::uint32_t mod_data_in_window = 0;
     // The scene the player is in, from its latest OBJECT_PRESENT or
     // PLAYER_SAMPLE scene; empty while not known.
     std::string scene;
@@ -655,6 +664,7 @@ class Session {
   // values in force are the ones told before, as with the host's own choice.
   void tell_difficulty_change(ConnectionId except);
   void on_mods(ConnectionId id, Connection& c, protocol::Message& message);
+  void on_mod_data(ConnectionId id, Connection& c, protocol::Message& message);
   // The Lobby: the host's kick, ban and mutes (docs/protocol.md "Lobby").
   void on_lobby(ConnectionId id, const protocol::LobbyAction& a, std::uint64_t now_us);
   std::uint8_t lobby_mutes_of(const Connection& c) const;

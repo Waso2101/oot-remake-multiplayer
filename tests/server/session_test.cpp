@@ -5504,3 +5504,57 @@ TEST_CASE("boss beaten: a new group (the session emptied) starts with no boss be
   h.join(2, "Zelda");
   CHECK(messages_to<BossScene>(h, 2).empty());
 }
+
+TEST_CASE("mod data: the newest value per player, mod and key, passed on, given to joiners, gone with the player") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  const ModData malon{0, "coop", "skin", {'M', 0, 1}};
+  h.receive(1, malon, kChannelSession);
+  CHECK(only_message_to<ModData>(h, 2) == ModData{1, "coop", "skin", {'M', 0, 1}});
+  CHECK(messages_to<ModData>(h, 1).empty());
+  const ModData zelda{0, "coop", "skin", {'Z', 0, 2}};
+  h.receive(1, zelda, kChannelSession);   // a newer value replaces it
+  h.clear();
+  h.join(3, "Saria");
+  CHECK(messages_to<ModData>(h, 3) == std::vector<ModData>{ModData{1, "coop", "skin", {'Z', 0, 2}}});
+  // An empty value clears the key: a later joiner gets nothing of it.
+  h.receive(1, ModData{0, "coop", "skin", {}}, kChannelSession);
+  h.clear();
+  h.join(4, "Ruto");
+  CHECK(messages_to<ModData>(h, 4).empty());
+  // A player's values go with it.
+  h.receive(2, ModData{0, "coop", "skin", {'L', 0, 3}}, kChannelSession);
+  h.session.disconnected(2, h.now);
+  h.collect();
+  h.clear();
+  h.join(2, "Nabooru");
+  CHECK(messages_to<ModData>(h, 2).empty());
+}
+
+TEST_CASE("mod data: limits per player: keys per mod, mods, sends a second") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.clear();
+  // 4 sends a second: the 5th in the same second is dropped, the next second takes it again.
+  for (int i = 0; i < 5; ++i) {
+    h.receive(1, ModData{0, "coop", "k" + std::to_string(i), {1}}, kChannelSession);
+  }
+  CHECK(messages_to<ModData>(h, 2).size() == 4);
+  CHECK(h.session.stats().mod_data_refused == 1);
+  h.now += kSecond + 1;
+  h.session.tick(h.now);
+  h.clear();
+  // 8 keys per mod: 4 kept, 4 more fill it, a 9th is refused.
+  for (int i = 4; i < 8; ++i) {
+    h.receive(1, ModData{0, "coop", "k" + std::to_string(i), {1}}, kChannelSession);
+  }
+  h.now += kSecond + 1;
+  h.session.tick(h.now);
+  h.receive(1, ModData{0, "coop", "k9", {1}}, kChannelSession);
+  CHECK(h.session.stats().mod_data_refused == 2);
+  h.receive(1, ModData{0, "coop", "k0", {2}}, kChannelSession);   // a key it has: still taken
+  CHECK(h.session.stats().mod_data_refused == 2);
+}

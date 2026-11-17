@@ -145,6 +145,7 @@ enum class MessageType : std::uint16_t {
   voice_frame = 420,  // 420 to 424: proximity voice chat (docs/protocol.md, "Voice")
   mod_list = 490,  // 490 to 499: mods (docs/protocol.md, "Mods")
   mod_settings = 491,
+  mod_data = 492,
   lobby_action = 510,  // 510 to 519: the Lobby's host moderation (docs/protocol.md, "Lobby")
   lobby_mutes = 511,
   lobby_result = 512,
@@ -1667,6 +1668,24 @@ struct ModSettings {
   bool operator==(const ModSettings&) const = default;
 };
 
+// MOD_DATA (492, issue 250 (1)): a small value a mod gives the other players' copies of the same mod,
+// under a key of its own (co-op itself uses the mod id "coop": key "skin", the custom model a player
+// wears). The sender's own value only: the server writes the sender's number, keeps the newest value per
+// player, mod and key, relays it, gives a joiner everyone's, and drops a player's values when it leaves.
+// An empty value clears the key. The server never reads the bytes. Limits: kMaxModDataValueBytes a
+// value, kMaxModDataKeys keys per mod and kMaxModDataMods mods per player (more are dropped).
+inline constexpr std::size_t kMaxModDataKeyChars = 32;     // 1 to 32, [a-z0-9_]
+inline constexpr std::size_t kMaxModDataValueBytes = 64;
+inline constexpr std::size_t kMaxModDataKeys = 8;
+inline constexpr std::size_t kMaxModDataMods = 16;
+struct ModData {
+  std::uint8_t player_number = kPlayerSelf;  // 0 from the sender, 1 to 16 relayed
+  std::string mod_id;                        // as ModEntry::id
+  std::string key;
+  std::vector<std::uint8_t> value;           // 0 to kMaxModDataValueBytes; empty: cleared
+  bool operator==(const ModData&) const = default;
+};
+
 // The Lobby (protocol 11, docs/protocol.md "Lobby"): the host's moderation,
 // all of it carried out by the server, which takes a LOBBY_ACTION from the
 // host only. A player's own (local) mutes never reach the wire.
@@ -1777,7 +1796,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              DbnoMode, DbnoStatus, DbnoRevive, DbnoThreat, Difficulty, VoiceFrame,
                              ModList, ModSettings, LobbyAction, LobbyMutes, LobbyResult,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
-                             BossScene, BossHeart, PlayerLook, SwitchState>;
+                             BossScene, BossHeart, PlayerLook, SwitchState, ModData>;
 
 MessageType type_of(const Message& message);
 
