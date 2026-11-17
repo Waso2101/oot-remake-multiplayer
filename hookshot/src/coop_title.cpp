@@ -353,6 +353,20 @@ void SaveLook(const CoopLook::Look& look) {
              kit ? "coop-options.ini" : "coop.ini", ok ? "" : " (the file could not be written)");
 }
 
+void SaveCharacter(const std::string& skin, bool everyone_link) {
+    using CoopTitleMenu::IniSet;
+    using CoopTitleMenu::IniUnset;
+    const auto kit = FindKit();
+    const fs::path file = kit ? *kit / "coop-options.ini" : CoopIni();
+    std::string text = ReadText(file);
+    text = skin.empty() ? IniUnset(text, "LICHII_COOP_SKIN") : IniSet(text, "LICHII_COOP_SKIN", skin, false);
+    text = everyone_link ? IniSet(text, "LICHII_COOP_SEE_LINK", "1", false) : IniUnset(text, "LICHII_COOP_SEE_LINK");
+    const bool ok = WriteText(file, text);
+    LOG_INFO(Core, "coop: skin: {}{} saved to {}{}", skin.empty() ? std::string("Link (the game's own)") : skin,
+             everyone_link ? ", seeing everyone as Link" : "", kit ? "coop-options.ini" : "coop.ini",
+             ok ? "" : " (the file could not be written)");
+}
+
 // Whether `kit` (FindKit's) is this game's own: named (OOT_COOP_KIT, coop-kit.txt), or the game is its
 // hookshot\game (or the kit folder itself). A kit found further up is someone else's folder the game sits in.
 static bool OwnKit(const fs::path& kit) {

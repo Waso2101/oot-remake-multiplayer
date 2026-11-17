@@ -914,6 +914,7 @@ void Menu::Decide(Act act) {
         break;
     case Act::kOpenCustomize:
         Go(Page::kCustomize);
+        customize_.SetCharacters(characters_, character_);
         customize_.Open(look_);
         break;
     case Act::kCommand:   // (a line to read: its help says it)
@@ -1357,6 +1358,11 @@ std::vector<CoopLookMenu::Shape> Menu::Picture() const {
 }
 
 void Menu::TakeCustomize() {
+    if (auto pick = customize_.TakeCharacter()) {
+        character_ = *pick;
+        request_ = Request{Request::Kind::kCharacter, {}};
+        return;
+    }
     if (auto look = customize_.TakeChange()) {
         look_ = *look;
         options_.colour = CoopLook::ColourText(look_[CoopLook::Part::tunic]);   // the Settings page's row agrees

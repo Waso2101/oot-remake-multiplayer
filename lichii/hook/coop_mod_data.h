@@ -4,6 +4,8 @@
 // kept here and sent when they change (at most every kSendEveryMs) and again after a reconnect; the server
 // keeps everyone's newest, gives them to a joiner and drops a player's when it leaves. The others' values
 // are kept by player, mod and key.
+//
+// Co-op itself uses the mod id "coop": key "skin" is the custom model a player wears (SkinValue).
 #pragma once
 
 #include <cstdint>
@@ -55,5 +57,10 @@ std::optional<Bytes> Of(std::uint8_t player, const std::string& mod_id, const st
 void OnEvent(const coop::net::Event& event, coop::net::Client& client);
 // Each frame: our changed values out.
 void Frame(coop::host::Session* session, std::uint64_t now_ms);
+
+// "coop" / "skin": the skin's id, a 0 byte, and the 32 bytes of its SHA-256 (the pack's hex sha256). An empty
+// id: no skin (Link). Decode gives the id and the hash as lowercase hex; nothing for a broken value.
+Bytes SkinValue(const std::string& id, const std::string& sha256_hex);
+std::optional<std::pair<std::string, std::string>> SkinOf(const Bytes& value);
 
 }  // namespace CoopModData

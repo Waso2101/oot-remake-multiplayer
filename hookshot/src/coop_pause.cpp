@@ -2,6 +2,7 @@
 #include "coop_pause.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -26,6 +27,8 @@
 #include "coop_look_view.h"
 #include "coop_mods_tab.h"
 #include "coop_pause_files.h"
+#include "coop_puppet.h"
+#include "coop_puppet_config.h"
 #include "coop_title.h"
 #include "coop_title_menu.h"
 #include "coop_voice.h"
@@ -78,6 +81,23 @@ std::uint64_t NowMs() {
 
 std::mutex g_mutex;   // everything below
 CoopPauseMenu::Menu g_menu;
+
+std::string EnvVar(const char* name) {
+    const char* v = std::getenv(name);
+    return v != nullptr ? std::string(v) : std::string();
+}
+
+void SetEnvVar(const char* name, const std::string& value) {
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    if (value.empty()) {
+        unsetenv(name);
+    } else {
+        setenv(name, value.c_str(), 1);
+    }
+#endif
+}
 bool g_coop_on = false;      // co-op came with the game's start (coop.ini named a server): not started or stopped here
 bool g_shown = false;        // the tab shows in Hookshot's menu
 std::string g_doing;         // what the tab started: "hosting", "joined", "" none
@@ -573,6 +593,18 @@ void Act(const Request& r) {
         break;
     }
     case Request::Kind::kLookParts: g_menu.SetNote(ChooseLookParts(g_menu.look())); break;
+    case Request::Kind::kCharacter: {
+        const auto& pick = g_menu.character();
+        CoopTitle::SaveCharacter(pick.id, pick.everyone_link);
+        CoopPuppetConfig::PutSelfSkin(pick.id);   // (a restart from the menu runs no kit launcher)
+        CoopPuppetConfig::ShareOwnSkin(pick.id);  // the others see it at once (MOD_DATA)
+        CoopPuppet::SetEveryoneLink(pick.everyone_link);
+        SetEnvVar("LICHII_COOP_SKIN", pick.id);   // (the menu opens on it again)
+        SetEnvVar("LICHII_COOP_SEE_LINK", pick.everyone_link ? "1" : "");
+        g_menu.SetNote({pick.id.empty() ? std::string("You wear Link again from the next start.")
+                                        : "The others see you as " + pick.id + " now; your own Link from the next start."});
+        break;
+    }
     case Request::Kind::kPaste:
         // Into the field that asked only: on Linux the text may come a moment later (PasteThen), and a field the
         // player moved to meanwhile (another row or page) does not get it.
@@ -616,6 +648,14 @@ void ShowTab() {
     g_shown = true;
     g_menu.Show(ReadOptions());
     g_menu.SetLook(CoopLook::Shown());   // the Customize page opens on the look waiting, else the one worn
+    {
+        std::vector<CoopLookMenu::Character> custom;
+        for (const auto& sk : CoopPuppetConfig::Skins()) {
+            custom.push_back({sk.id, sk.child, sk.adult});
+        }
+        const std::string see = EnvVar("LICHII_COOP_SEE_LINK");
+        g_menu.SetCharacters(std::move(custom), {EnvVar("LICHII_COOP_SKIN"), !see.empty() && see != "0"});
+    }
     const std::string coop = ReadText(CoopIni());
     const auto last = CoopTitleMenu::IniGet(coop, "last_invite");
     g_menu.SetRejoin(CoopTitleMenu::IniGet(coop, "last_host").value_or(""), last.value_or(""));

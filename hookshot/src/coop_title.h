@@ -30,6 +30,10 @@ void ApplyKitOptions();
 // kit's coop-options.ini (else coop.ini) so the next start keeps it (the
 // title's Settings page reads the files when it opens). The calc thread.
 void SaveLook(const CoopLook::Look& look);
+// The Customize page's character (docs/puppet.md, "Custom models"): `skin` the custom model's id ("" Link),
+// written as LICHII_COOP_SKIN, and "See everyone as Link" as LICHII_COOP_SEE_LINK, in the kit's
+// coop-options.ini, else coop.ini. The kit puts your own Link's skin in place at the next start.
+void SaveCharacter(const std::string& skin, bool everyone_link);
 
 // hos_coop_title: the game's calc thread (ctx may call()).
 void OnTitle(void* ctx, std::uint64_t screen, int event);

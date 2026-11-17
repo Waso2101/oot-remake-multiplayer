@@ -403,7 +403,8 @@ public:
     }
     // How long after a tunic puppet spawns its model is checked.
     static constexpr std::uint64_t kTunicModelCheckMs = 3000;
-    // CoopPuppet_<Age>_<Colour>, not the plain CoopPuppet_<Age>.
+    // CoopPuppet_<Age>_<Colour> or a skin's CoopPuppet_<Age>_Skin_<id>, not the
+    // plain CoopPuppet_<Age>: either can fail and fall back (TunicFails).
     static bool IsTunicActor(std::string_view name) {
         constexpr std::string_view kBase = "CoopPuppet_";
         return name.substr(0, kBase.size()) == kBase &&
@@ -651,6 +652,15 @@ private:
     std::set<std::string> tunic_failed_;           // guarded by tunic_mutex_
     std::map<std::string, int> tunic_timeouts_;    // by actor name
     bool tunic_proven_ = false;  // a tunic puppet spawned with its model: the pack has them
+    // Skin puppets that spawned with a model here: each skin is its own mod, so one
+    // that works proves nothing for another (and a tunic proves nothing for a skin).
+    std::set<std::string> skin_proven_;
+    static bool IsSkinActor(std::string_view name) { return name.find("_Skin_") != std::string_view::npos; }
+    // Whether a failure of this actor may still make it fall back: not once it (a skin)
+    // or any tunic puppet (a colour) has spawned with its model.
+    bool MayFail(const std::string& name) const {
+        return IsSkinActor(name) ? skin_proven_.count(name) == 0 : !tunic_proven_;
+    }
     void TunicFails(const std::string& actor, const std::string& why);
 
     mutable std::mutex input_mutex_;
@@ -703,7 +713,26 @@ struct Remote {
     // The item copy painted in the player's gear colours
     // (CoopLookShare::CopyOf): their puppet wears it.
     std::optional<std::size_t> look_copy;
+    // The custom model the player wears (docs/puppet.md, "Custom models"): the
+    // skin's id and the SHA-256 of its files, from the mod-data channel's
+    // "coop" / "skin" (MOD_DATA, coop_mod_data.h). Their puppet wears it
+    // only when this game's pack has the same skin (same id and hash).
+    std::string skin;
+    std::string skin_sha256;
 };
+
+// One skin of the puppet pack (coop_puppet.json "skins", tools/puppet_pack/skin.py):
+// its id, the SHA-256 of its files, and the ages it has a puppet for.
+struct PackSkin {
+    std::string id;
+    std::string sha256;
+    bool child = false;
+    bool adult = false;
+};
+// The pack's skins; none for a pack without them.
+std::vector<PackSkin> PackSkins(std::string_view manifest);
+// A skin's puppet: CoopPuppet_<Age>_Skin_<id>.
+std::string SkinActor(bool adult, std::string_view id);
 
 struct PlannerSettings {
     // The actor pack; "" picks CoopPuppet_Child or CoopPuppet_Adult by the
@@ -755,6 +784,12 @@ struct PlannerSettings {
     // Reads through a puppet's missing components give 0 (the emulator, or
     // Hookshot's null page armable): Director::SetNullReadsZero.
     bool null_reads_zero = true;
+    // The pack's custom models (PackSkins). A player who wears one of them, with
+    // the same hash, gets its puppet (SkinActor), before any tunic colour.
+    std::vector<PackSkin> skins;
+    // The viewer's "See everyone as Link" (coop-options.ini `see_everyone_as_link`):
+    // no skin puppet at all, every player in their tunic colour.
+    bool everyone_link = false;
 };
 
 // The puppet pack's item copies (coop_puppet.json "look_items",
@@ -815,6 +850,12 @@ public:
     // The actor for a player of that age and colour: CoopPuppet_<Age>, or
     // CoopPuppet_<Age>_<Colour> (CoopColors::TunicOf) while tunics are on.
     std::string ActorFor(bool adult, std::optional<std::uint32_t> color = {}) const;
+    // The same with the player's custom model (Remote::skin): its puppet first
+    // when the pack has that skin for this age with the same hash, the viewer
+    // does not see everyone as Link, and it has not failed here; else as above.
+    std::string ActorFor(bool adult, std::optional<std::uint32_t> color, const std::string& skin,
+                         const std::string& skin_sha256) const;
+    void SetEveryoneLink(bool on) { settings_.everyone_link = on; }
     void SetTunics(bool on) { settings_.tunics = on; }
     void SetGreenPuppet(bool on) { settings_.green_puppet = on; }
     // Tunic actors that do not work here (Director::FailedTunics): the plain
@@ -834,6 +875,8 @@ private:
 // Configure once, before the game starts (CoopSvc does it).
 void Configure(PlannerSettings settings, bool verbose, Director::Log log);
 Director& TheDirector();
+// Any thread: "See everyone as Link" now (the Customize page); the next plan follows it.
+void SetEveryoneLink(bool on);
 // Any thread: TheDirector's LiveMask(), 0 while the puppets are off.
 std::uint32_t LivePuppets();
 

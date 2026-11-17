@@ -5,11 +5,13 @@
 #include "coop_colors.h"
 #include "coop_local_game.h"
 #include "coop_look_share.h"
+#include "coop_mod_data.h"
 #include "coop_pose.h"
 #include "coop_puppet_own.h"
 #include "coop_show_delay.h"
 
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -362,10 +364,12 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 // Twice for the same actor, and only while no tunic puppet has
                 // spawned yet: slow loads in a heavy scene must not cost a
                 // working pack its colours.
-                if (IsTunicActor(slot.actor_name) && !tunic_proven_ &&
+                if (IsTunicActor(slot.actor_name) && MayFail(slot.actor_name) &&
                     ++tunic_timeouts_[slot.actor_name] == 2) {
-                    TunicFails(slot.actor_name, "not made twice: the puppet pack has no tunic "
-                                                "colours (an older pack? run make-puppet-pack again)");
+                    TunicFails(slot.actor_name, IsSkinActor(slot.actor_name)
+                                                    ? "not made twice: the custom model does not load here"
+                                                    : "not made twice: the puppet pack has no tunic "
+                                                      "colours (an older pack? run make-puppet-pack again)");
                 }
                 // Its actor may still be loading: made later, it would be a
                 // second puppet of this player beside the next one. Deleted.
@@ -392,8 +396,16 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 // neither, or a name other than Player_, counts as a failure.
                 const auto model = CoopPose::ModelNameOf(guest, slot.actor);
                 const std::uint64_t object = CoopColors::ModelOf(guest, slot.actor);
-                if (model ? model->rfind("Player_", 0) == 0 : object != 0) {
-                    tunic_proven_ = true;
+                // A skin's model is the mod's, any name (Malon's is Player_Malon_Adult, another
+                // mod's may be anything): any model counts.
+                const bool skin = IsSkinActor(slot.actor_name);
+                if (skin ? (model.has_value() || object != 0)
+                         : (model ? model->rfind("Player_", 0) == 0 : object != 0)) {
+                    if (skin) {
+                        skin_proven_.insert(slot.actor_name);
+                    } else {
+                        tunic_proven_ = true;
+                    }
                     Say("P" + std::to_string(slot.number) + " " + slot.actor_name + ": model " +
                         (model ? *model : "object " + Hex(object) + " (name not read)"));
                 } else {
@@ -543,10 +555,12 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         // for good, so no puppet at all). The plain puppet then, as after two
         // create timeouts. Only while no tunic puppet has spawned: refusals
         // during a load must not cost a working pack its colours.
-        if (IsTunicActor(slot.actor_name) && !tunic_proven_ && slot.refused == kRefusedTunicFallback) {
+        if (IsTunicActor(slot.actor_name) && MayFail(slot.actor_name) && slot.refused == kRefusedTunicFallback) {
             TunicFails(slot.actor_name, "refused " + std::to_string(kRefusedTunicFallback) +
-                                            " times: the puppet pack has no tunic colours (an older pack? run "
-                                            "make-puppet-pack again)");
+                                            (IsSkinActor(slot.actor_name)
+                                                 ? " times: this game's puppet pack has no such custom model"
+                                                 : " times: the puppet pack has no tunic colours (an older pack? "
+                                                   "run make-puppet-pack again)"));
             slot.refused = 0;
             slot.retry_ms = now_ms;  // the plain puppet at once
             break;
@@ -2001,6 +2015,10 @@ Gear GearOf(const coop::protocol::Equipment& e) {
     return gear;
 }
 
+namespace {
+bool SameId(std::string_view a, std::string_view b);   // (below)
+}  // namespace
+
 Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& scene,
                     const std::optional<Vec3>& position, bool local_event,
                     const std::vector<Remote>& remotes, std::uint64_t now_ms,
@@ -2057,7 +2075,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         Target t;
         t.number = r.number;
         t.color = r.color ? r.color : coop::protocol::slot_color(r.number);
-        t.actor = ActorFor(r.adult, t.color);
+        t.actor = ActorFor(r.adult, t.color, r.skin, r.skin_sha256);
         t.position = r.position;
         t.velocity = r.velocity;
         if (r.rotation) {
@@ -2235,8 +2253,137 @@ bool PackHasGreenPuppets(std::string_view manifest) {
 }
 
 bool PackHasTunicPuppets(std::string_view manifest) {
-    return manifest.find("\"CoopPuppet_Child_") != std::string_view::npos ||
-           manifest.find("\"CoopPuppet_Adult_") != std::string_view::npos;
+    // A skin's puppet (CoopPuppet_<Age>_Skin_<id>) is no tunic colour.
+    for (const std::string_view base : {std::string_view("\"CoopPuppet_Child_"), std::string_view("\"CoopPuppet_Adult_")}) {
+        for (auto at = manifest.find(base); at != std::string_view::npos; at = manifest.find(base, at + 1)) {
+            if (manifest.substr(at + base.size(), 5) != "Skin_") {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::string SkinActor(bool adult, std::string_view id) {
+    return std::string(adult ? "CoopPuppet_Adult_Skin_" : "CoopPuppet_Child_Skin_") + std::string(id);
+}
+
+namespace {
+
+// The string value of `"key": "..."` in `obj` (no escapes: ids and hashes are plain), or "".
+std::string JsonString(std::string_view obj, std::string_view key) {
+    const std::string quoted = "\"" + std::string(key) + "\"";
+    const auto at = obj.find(quoted);
+    if (at == std::string_view::npos) {
+        return {};
+    }
+    const auto q0 = obj.find_first_not_of(" \t\r\n:", at + quoted.size());
+    if (q0 == std::string_view::npos || obj[q0] != '"') {
+        return {};
+    }
+    const auto q1 = obj.find('"', q0 + 1);
+    return q1 == std::string_view::npos ? std::string() : std::string(obj.substr(q0 + 1, q1 - q0 - 1));
+}
+
+// The end of the JSON object or array opening at `open` (past its close); npos when it never closes.
+std::size_t ValueEnd(std::string_view text, std::size_t open) {
+    int depth = 0;
+    bool in_string = false;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        const char c = text[i];
+        if (in_string) {
+            if (c == '\\') {
+                ++i;
+            } else if (c == '"') {
+                in_string = false;
+            }
+        } else if (c == '"') {
+            in_string = true;
+        } else if (c == '{' || c == '[') {
+            ++depth;
+        } else if ((c == '}' || c == ']') && --depth == 0) {
+            return i + 1;
+        }
+    }
+    return std::string_view::npos;
+}
+
+bool SameId(std::string_view a, std::string_view b) {
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+           });
+}
+
+}  // namespace
+
+std::vector<PackSkin> PackSkins(std::string_view manifest) {
+    // "skins": [{"id": "Malon", "variants": ["Child", "Adult"], ..., "sha256": "..."}, ...], as build.py
+    // writes it (json.dumps); absent in a pack without skins.
+    std::vector<PackSkin> out;
+    const auto at = manifest.find("\"skins\"");
+    if (at == std::string_view::npos) {
+        return out;
+    }
+    const auto open = manifest.find_first_not_of(" \t\r\n:", at + 7);
+    if (open == std::string_view::npos || manifest[open] != '[') {
+        return out;
+    }
+    const auto end = ValueEnd(manifest, open);
+    if (end == std::string_view::npos) {
+        return out;
+    }
+    for (std::size_t i = open + 1; i < end;) {
+        const auto o = manifest.find('{', i);
+        if (o == std::string_view::npos || o >= end) {
+            break;
+        }
+        const auto e = ValueEnd(manifest, o);
+        if (e == std::string_view::npos || e > end) {
+            break;
+        }
+        const std::string_view obj = manifest.substr(o, e - o);
+        PackSkin sk;
+        sk.id = JsonString(obj, "id");
+        sk.sha256 = JsonString(obj, "sha256");
+        if (const auto v = obj.find("\"variants\""); v != std::string_view::npos) {
+            const auto lb = obj.find('[', v);
+            const auto rb = lb == std::string_view::npos ? lb : obj.find(']', lb);
+            if (rb != std::string_view::npos) {
+                const std::string_view list = obj.substr(lb, rb - lb);
+                sk.child = list.find("\"Child\"") != std::string_view::npos;
+                sk.adult = list.find("\"Adult\"") != std::string_view::npos;
+            }
+        }
+        if (!sk.id.empty() && (sk.child || sk.adult)) {
+            out.push_back(std::move(sk));
+        }
+        i = e;
+    }
+    return out;
+}
+
+std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color, const std::string& skin,
+                              const std::string& skin_sha256) const {
+    if (!skin.empty() && !settings_.everyone_link && settings_.actor.empty() && !settings_.native_player) {
+        for (const PackSkin& sk : settings_.skins) {
+            // The same skin: the id (any case, as the pack tool takes it) and the hash of its files.
+            if (!SameId(sk.id, skin) || sk.sha256.empty() || sk.sha256 != skin_sha256) {
+                continue;
+            }
+            if (!(adult ? sk.adult : sk.child)) {
+                break;   // the skin leaves this age alone: Link in their colour
+            }
+            const bool quiet = std::find(settings_.quiet_scenes.begin(), settings_.quiet_scenes.end(), scene_) !=
+                               settings_.quiet_scenes.end();
+            const std::string name = quiet ? QuietActor(SkinActor(adult, sk.id)) : SkinActor(adult, sk.id);
+            if (std::find(failed_tunics_.begin(), failed_tunics_.end(), name) == failed_tunics_.end()) {
+                return name;
+            }
+            break;   // it failed here: the colour puppet
+        }
+    }
+    return ActorFor(adult, color);
 }
 
 std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) const {
@@ -2279,7 +2426,8 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color) co
 void Director::TunicFails(const std::string& actor, const std::string& why) {
     std::lock_guard lock(tunic_mutex_);
     if (tunic_failed_.insert(actor).second) {
-        Say(actor + " " + why + "; that colour shows as the plain puppet from now on");
+        Say(actor + " " + why + (IsSkinActor(actor) ? "; that player shows as Link in their colour from now on"
+                                                     : "; that colour shows as the plain puppet from now on"));
     }
 }
 
@@ -2420,6 +2568,14 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
     });
 }
 
+std::atomic<bool> g_everyone_link_set = false;   // SetEveryoneLink was called
+std::atomic<bool> g_everyone_link = false;
+
+void SetEveryoneLink(bool on) {
+    g_everyone_link = on;
+    g_everyone_link_set = true;
+}
+
 Director& TheDirector() {
     Configure({}, false, {});
     return *g_director;
@@ -2476,6 +2632,13 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                 r.sounds = std::exchange(g_sounds[r.number], {});
             }
             r.look_copy = CoopLookShare::CopyOf(r.number);
+            // The skin the player wears, from the mod-data channel ("coop" / "skin").
+            if (const auto value = CoopModData::Of(r.number, "coop", "skin")) {
+                if (const auto skin = CoopModData::SkinOf(*value)) {
+                    r.skin = skin->first;
+                    r.skin_sha256 = skin->second;
+                }
+            }
         }
     }
     return remotes;
@@ -2503,6 +2666,9 @@ void Publish(std::uint64_t main_base, const std::optional<std::string>& scene,
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
     g_planner->SetFailedTunics(g_director->FailedTunics());
+    if (g_everyone_link_set) {
+        g_planner->SetEveryoneLink(g_everyone_link);
+    }
     auto input = g_planner->Plan(main_base, scene, position, local_event, remotes, now_ms, own_gear, own_drawn, own_color);
     if (main_base != 0) CoopLocalGame::AddTargets(input);   // local co-op's players (coop_local_game.h)
     input.made_ms = now_ms;

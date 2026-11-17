@@ -254,6 +254,20 @@ try {
     Write-File (Join-Path $sp 'coop_puppet.json') '{ not json'
     Check ((Set-KitSelfTunic $sp 'red') -eq '') 'self tunic: a broken coop_puppet.json: none, no throw'
     Check ((Set-KitSelfTunic (Join-Path $ph 'no-pack') 'red') -eq '') 'self tunic: no pack: none, no throw'
+    # your own Link in a custom model (LICHII_COOP_SKIN): the skin's player pack over the game's, and away again
+    $kp = Join-Path $ph 'skin-pack'
+    New-Item -ItemType Directory -Force -Path (Join-Path $kp 'coop_skin_self\Malon') | Out-Null
+    Write-File (Join-Path $kp 'coop_skin_self\Malon\Player_Adult.pack.zs') 'MALON'
+    Write-File (Join-Path $kp 'coop_puppet.json') '{"skins": [{"id": "Malon", "self_files": {"Pack/Actor/Player_Adult.pack.zs": "coop_skin_self/Malon/Player_Adult.pack.zs", "Pack/Actor/Evil.pack.zs": "coop_skin_self/Malon/Player_Adult.pack.zs"}}]}'
+    $own = Join-Path $kp 'romfs\Pack\Actor\Player_Adult.pack.zs'
+    Check ((Set-KitSelfSkin $kp 'malon') -eq 'Malon') 'self skin: Malon put in (any case)'
+    Check ((Test-Path -LiteralPath $own) -and [System.IO.File]::ReadAllText($own) -eq 'MALON') 'self skin: her player pack over the game''s'
+    Check (-not (Test-Path -LiteralPath (Join-Path $kp 'romfs\Pack\Actor\Evil.pack.zs'))) 'self skin: only the player''s packs'
+    Check ((Set-KitSelfSkin $kp '') -eq '' -and -not (Test-Path -LiteralPath $own)) 'self skin: Link again: taken away'
+    [void](Set-KitSelfSkin $kp 'Malon')
+    Check ((Set-KitSelfSkin $kp 'Zelda') -eq '' -and -not (Test-Path -LiteralPath $own)) 'self skin: not in the pack: none, the old one away'
+    Write-File (Join-Path $kp 'coop_puppet.json') '{ not json'
+    Check ((Set-KitSelfSkin $kp 'Malon') -eq '') 'self skin: a broken coop_puppet.json: none, no throw'
     # the dark tile (the child's tunic body, #202): copied with the main one, taken away with it
     Write-File (Join-Path $sp 'coop_self\red.dark.bntx.zs') 'REDDARK'
     Write-File (Join-Path $sp 'coop_puppet.json') '{"tunics": {"red": ["x"], "green": ["y"]}, "self_tiles": {"red": "coop_self/red.bntx.zs"}, "self_dark_tiles": {"red": "coop_self/red.dark.bntx.zs"}}'

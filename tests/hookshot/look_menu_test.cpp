@@ -49,9 +49,9 @@ TEST_CASE("look menu: every part on the list, by item, under its heading") {
         parts += r.kind == 1;
         headings += r.kind == 3;
     }
-    CHECK(parts == static_cast<int>(CoopLook::kParts));
-    CHECK(headings == 9);    // Tunic, 3 shields, 3 swords, Boots, Gauntlets
-    CHECK(v.rows[static_cast<std::size_t>(v.selected)].kind == 1);   // a part, not a heading
+    CHECK(parts == static_cast<int>(CoopLook::kParts) + 1);   // and "See everyone as Link"
+    CHECK(headings == 11);   // Game characters, Custom models, Tunic, 3 shields, 3 swords, Boots, Gauntlets
+    CHECK(v.rows[static_cast<std::size_t>(v.selected)].name == "Link");   // the first row, not a heading
     CHECK(v.rows[static_cast<std::size_t>(RowOf(page, "Hylian Shield", "Frame"))].value == "Game's own");
     CHECK(v.back == "Back");
     CHECK_FALSE(v.picture.empty());
@@ -153,4 +153,59 @@ TEST_CASE("look menu: everything back to the game's own, the picture follows the
     page.Select(1);
     page.Press(Input::kUp);
     CHECK(page.view().selected == static_cast<int>(all));
+}
+
+TEST_CASE("look menu: the Characters rows: Link and the pack's custom models, Confirm wears one") {
+    Page page;
+    page.SetCharacters({{"Malon", true, true}, {"Zelda", false, true}}, {"", false});
+    page.Open(Look{});
+    auto v = page.view();
+    CHECK(v.rows[0].name == "Game characters");
+    CHECK(v.rows[1].name == "Link");
+    CHECK(v.rows[1].value == "Wearing");
+    CHECK(v.rows[2].name == "Custom models");
+    CHECK(v.rows[3].name == "Malon");
+    CHECK(v.rows[3].value == "");
+    CHECK(v.rows[4].name == "Zelda");
+    CHECK(v.rows[5].name == "See everyone as Link");
+    CHECK(v.rows[5].value == "Off");
+    CHECK(v.help_title == "Character");
+    CHECK_FALSE(page.TakeCharacter());
+    page.Press(Input::kDown);                 // Malon (past the heading)
+    CHECK(page.view().selected == 3);
+    CHECK(page.view().confirm == "Wear");
+    page.Press(Input::kDecide);
+    auto pick = page.TakeCharacter();
+    REQUIRE(pick);
+    CHECK(pick->id == "Malon");
+    CHECK_FALSE(pick->everyone_link);
+    CHECK(page.view().rows[3].value == "Wearing");
+    CHECK(page.view().rows[1].value == "");
+    CHECK_FALSE(page.TakeCharacter());
+    page.Press(Input::kDecide);               // the same again: no change
+    CHECK_FALSE(page.TakeCharacter());
+    CHECK(page.view().help.find("Adult only") == std::string::npos);
+    page.Click(4, 0);                         // Zelda with the mouse
+    CHECK(page.TakeCharacter()->id == "Zelda");
+    CHECK(page.view().help.find("Adult only") != std::string::npos);
+    page.Click(5, 1);                         // See everyone as Link: On
+    pick = page.TakeCharacter();
+    REQUIRE(pick);
+    CHECK(pick->everyone_link);
+    CHECK(pick->id == "Zelda");
+    CHECK(page.view().rows[5].value == "On");
+    CHECK_FALSE(page.TakeChange());           // the look is untouched
+}
+
+TEST_CASE("look menu: no custom model in the pack says how to add one, an unknown pick shows as Link") {
+    Page page;
+    page.SetCharacters({}, {"Gone", false});
+    page.Open(Look{});
+    auto v = page.view();
+    CHECK(v.rows[1].value == "Wearing");      // Link: the pick's skin is not in the pack
+    CHECK(v.rows[3].kind == 4);               // the note
+    page.Select(3);                           // (not a row to choose)
+    CHECK(page.view().selected == 1);
+    page.Press(Input::kDown);
+    CHECK(page.view().rows[static_cast<std::size_t>(page.view().selected)].name == "See everyone as Link");
 }

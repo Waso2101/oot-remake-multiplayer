@@ -42,6 +42,12 @@ bool ValidModId(const std::string& id) {
     return true;
 }
 
+int HexDigit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
 
 }  // namespace
 
@@ -167,8 +173,14 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
 #ifdef LICHII_COOP
     if (const auto* d = std::get_if<ModData>(&event.message);
         changed && event.kind == EventKind::message && d != nullptr) {
-        LOG_INFO(Core, "coop: mod data: P{} {}/{} ({} bytes)", d->player_number, d->mod_id, d->key,
-                 d->value.size());
+        if (d->mod_id == "coop" && d->key == "skin") {
+            const auto skin = SkinOf(d->value);
+            LOG_INFO(Core, "coop: skin: P{} wears {}", d->player_number,
+                     skin && !skin->first.empty() ? skin->first : std::string("Link"));
+        } else {
+            LOG_INFO(Core, "coop: mod data: P{} {}/{} ({} bytes)", d->player_number, d->mod_id, d->key,
+                     d->value.size());
+        }
     }
 #else
     (void)changed;
@@ -197,9 +209,54 @@ void Frame(coop::host::Session* session, std::uint64_t now_ms) {
     });
 #ifdef LICHII_COOP
     for (const ModData& d : send) {
-        LOG_INFO(Core, "coop: mod data: sent {}/{} ({} bytes)", d.mod_id, d.key, d.value.size());
+        if (d.mod_id == "coop" && d.key == "skin") {
+            const auto skin = SkinOf(d.value);
+            LOG_INFO(Core, "coop: skin: sent: we wear {}", skin && !skin->first.empty() ? skin->first : std::string("Link"));
+        }
     }
 #endif
+}
+
+Bytes SkinValue(const std::string& id, const std::string& sha256_hex) {
+    if (id.empty() || sha256_hex.size() != 64) {
+        return {};
+    }
+    Bytes out(id.begin(), id.end());
+    out.push_back(0);
+    for (std::size_t i = 0; i < 64; i += 2) {
+        const int hi = HexDigit(sha256_hex[i]), lo = HexDigit(sha256_hex[i + 1]);
+        if (hi < 0 || lo < 0) {
+            return {};
+        }
+        out.push_back(static_cast<std::uint8_t>(hi * 16 + lo));
+    }
+    return out.size() <= coop::protocol::kMaxModDataValueBytes ? out : Bytes{};
+}
+
+std::optional<std::pair<std::string, std::string>> SkinOf(const Bytes& value) {
+    if (value.empty()) {
+        return std::pair<std::string, std::string>{};
+    }
+    std::size_t zero = 0;
+    while (zero < value.size() && value[zero] != 0) {
+        ++zero;
+    }
+    if (zero == 0 || zero > 20 || value.size() != zero + 1 + 32) {
+        return std::nullopt;
+    }
+    std::string id(value.begin(), value.begin() + static_cast<std::ptrdiff_t>(zero));
+    for (const char c : id) {
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) {
+            return std::nullopt;
+        }
+    }
+    static const char* kHex = "0123456789abcdef";
+    std::string hex;
+    for (std::size_t i = zero + 1; i < value.size(); ++i) {
+        hex.push_back(kHex[value[i] >> 4]);
+        hex.push_back(kHex[value[i] & 15]);
+    }
+    return std::pair<std::string, std::string>{std::move(id), std::move(hex)};
 }
 
 }  // namespace CoopModData

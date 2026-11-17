@@ -319,3 +319,17 @@ TEST_CASE("mod data: ours goes out when it changes and again after a reconnect, 
     CHECK(s.OnEvent(Kind(EventKind::player_left, 2)));
     CHECK_FALSE(s.Of(2, "coop", "skin"));
 }
+
+TEST_CASE("mod data: a skin is its id and the 32 bytes of its hash") {
+    const std::string sha = "582f07b9e7d70000000000000000000000000000000000000000000000000abc";
+    const auto v = CoopModData::SkinValue("Malon", sha);
+    CHECK(v.size() == 5 + 1 + 32);
+    const auto back = CoopModData::SkinOf(v);
+    REQUIRE(back);
+    CHECK(back->first == "Malon");
+    CHECK(back->second == sha);
+    CHECK(CoopModData::SkinValue("", sha).empty());                // Link
+    CHECK(CoopModData::SkinValue("Malon", "xyz").empty());         // not a hash
+    CHECK(CoopModData::SkinOf({})->first.empty());                 // Link
+    CHECK_FALSE(CoopModData::SkinOf({'M', 0, 1}));                 // broken
+}

@@ -492,6 +492,53 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     return ''
 }
 
+# Your own Link in the custom model chosen on Customize Link (LICHII_COOP_SKIN, docs/puppet.md "Custom
+# models"): the pack tool's coop_skin_self/<id>/Player_<Age>.pack.zs, listed in coop_puppet.json as
+# skins[].self_files ({romfs path: file beside the pack}), put over Pack/Actor/Player_<Age> in the pack's
+# romfs. Every skin's files are taken away first, so a change of skin, or Link again, leaves none behind.
+# Only Pack/Actor/Player_(Adult|Child).pack.zs and only files under the pack folder. Returns the skin's
+# id put in, or ''.
+function Set-KitSelfSkin([string]$PackDir, [string]$Skin) {
+    $romfs = Join-Path $PackDir 'romfs'
+    $ok = { param($rel) $rel -is [string] -and $rel -match '^Pack/Actor/Player_(Adult|Child)\.pack\.zs$' }
+    $okSrc = { param($rel) $rel -is [string] -and $rel -match '^coop_skin_self/[A-Za-z0-9]{1,20}/Player_(Adult|Child)\.pack\.zs$' }
+    $json = $null
+    try {
+        $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
+    } catch { }
+    $targets = @('Pack/Actor/Player_Adult.pack.zs', 'Pack/Actor/Player_Child.pack.zs')
+    $put = [ordered]@{}
+    $id = ''
+    try {
+        if ($Skin -and $json -and $json.skins) {
+            foreach ($sk in $json.skins) {
+                if ($sk.id -and $sk.id -ieq $Skin -and $sk.self_files) {
+                    foreach ($f in $sk.self_files.PSObject.Properties) {
+                        if ((& $ok $f.Name) -and (& $okSrc $f.Value)) { $put[$f.Name] = Join-Path $PackDir $f.Value }
+                    }
+                    $id = $sk.id
+                }
+            }
+        }
+        foreach ($t in $targets) {
+            $dst = Join-Path $romfs $t
+            if (-not $put.Contains($t) -and (Test-Path -LiteralPath $dst)) { Remove-Item -LiteralPath $dst -Force }
+        }
+        foreach ($t in @($put.Keys)) {
+            $dst = Join-Path $romfs $t
+            if (Test-Path -LiteralPath $put[$t] -PathType Leaf) {
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+                Copy-Item -LiteralPath $put[$t] -Destination $dst -Force
+            } else {
+                $put.Remove($t)
+                if (Test-Path -LiteralPath $dst) { Remove-Item -LiteralPath $dst -Force }
+            }
+        }
+        if ($put.Count) { return $id }
+    } catch { }
+    return ''
+}
+
 # With no colour chosen (coop-options.ini's color behind its '#'), the others see you in your player
 # number's colour (1 blue, 2 red), which is known only once the game has joined. Your own Link wears
 # the tunic put in before the game starts, so it stayed green (the hand test of a768c36). The colour of
@@ -533,6 +580,12 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
         elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
         if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {
             Write-Host "Your Link stays green: the puppet pack has no tunic of your colour. $script:KitPackRemake"
+        }
+        # Your own Link in the custom model chosen on Customize Link (LICHII_COOP_SKIN).
+        $skin = Set-KitSelfSkin (Split-Path -Parent $Manifest) $env:LICHII_COOP_SKIN
+        if ($skin) { Write-Host "Your Link: the custom model $skin (Customize Link)." }
+        elseif ($env:LICHII_COOP_SKIN) {
+            Write-Host "Your Link stays Link: the puppet pack has no custom model $($env:LICHII_COOP_SKIN). $script:KitPackRemake"
         }
         return $true
     }

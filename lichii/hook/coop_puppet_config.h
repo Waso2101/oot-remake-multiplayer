@@ -42,6 +42,15 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
 void Configure(bool perceived_safe = true);
 // A coop_puppet.json is under LoadDir/<title id> (the puppet pack is installed).
 bool HasPack();
+// The installed packs' custom models (coop_puppet.json "skins"), for Customize Link's Characters rows.
+std::vector<CoopPuppet::PackSkin> Skins();
+// Your own Link's custom model for the next start, however the game is started again (the kit's launcher
+// does the same): the pack's coop_skin_self/<id> player packs over the game's, or none for "" (Link).
+// Returns the skin's id as the pack spells it, "" when none was put in.
+std::string PutSelfSkin(const std::string& id);
+// The skin we wear for the other players ("coop" / "skin" over the mod-data channel, coop_mod_data.h), with
+// this pack's hash of it; "" or an id the pack lacks: Link. Returns the id as the pack spells it.
+std::string ShareOwnSkin(const std::string& id);
 #endif
 
 }  // namespace CoopPuppetConfig

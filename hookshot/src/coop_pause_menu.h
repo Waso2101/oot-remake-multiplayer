@@ -59,9 +59,10 @@ struct Request {
     // controller / keyboard (CoopInput::CycleController / CycleKeyboard),
     // applied and saved by the module, which then hands the new rows back
     // (SetInputRows). kLookParts: look() is the look chosen on the Customize
-    // page (coop_look_menu.h); worn when the menu closes.
+    // page (coop_look_menu.h); worn when the menu closes. kCharacter: character()
+    // is the Customize page's new pick (a custom model, "See everyone as Link").
     enum class Kind { kHost, kJoin, kLeave, kSave, kLook, kPaste, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan,
-                      kController, kKeyboard, kLookParts, kCopyVpn };
+                      kController, kKeyboard, kLookParts, kCopyVpn, kCharacter };
     Kind kind = Kind::kHost;
     std::string text;
 };
@@ -162,6 +163,13 @@ public:
     // on the other pages.
     std::vector<CoopLookMenu::Shape> Picture() const;
     const CoopLook::Look& look() const { return look_; }
+    // The Customize page's Characters rows: the pack's custom models and the
+    // pick worn now (coop_look_menu.h).
+    void SetCharacters(std::vector<CoopLookMenu::Character> custom, CoopLookMenu::CharacterPick pick) {
+        characters_ = std::move(custom);
+        character_ = std::move(pick);
+    }
+    const CoopLookMenu::CharacterPick& character() const { return character_; }
 
     Page page() const { return page_; }
     std::size_t selected() const { return selected_; }
@@ -221,6 +229,8 @@ private:
     // The Customize page (coop_look_menu.h): it has its own rows and presses.
     CoopLookMenu::Page customize_;
     CoopLook::Look look_;
+    std::vector<CoopLookMenu::Character> characters_;
+    CoopLookMenu::CharacterPick character_;
     void TakeCustomize();
 };
 

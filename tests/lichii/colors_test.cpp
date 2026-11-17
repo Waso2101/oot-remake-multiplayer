@@ -288,3 +288,58 @@ TEST_CASE("puppets: quiet everywhere when the runtime cannot make a perceived pu
     p.SetTunics(false);
     CHECK(plan("Kokiri") == "CoopPuppet_ChildQuiet");
 }
+
+TEST_CASE("puppet: a player's custom model, when this pack has the same skin") {
+    const std::string manifest = R"({"actors": [{"actor": "CoopPuppet_Adult_Skin_Malon"}],
+        "skins": [{"id": "Malon", "variants": ["Child", "Adult"], "models": {"Adult": "Npc_X"},
+                   "files": ["a", "b"], "sha256": "aa11"},
+                  {"id": "Zelda", "variants": ["Adult"], "gear": {}, "sha256": "bb22"}]})";
+    const auto skins = CoopPuppet::PackSkins(manifest);
+    REQUIRE(skins.size() == 2);
+    CHECK(skins[0].id == "Malon");
+    CHECK(skins[0].sha256 == "aa11");
+    CHECK((skins[0].child && skins[0].adult));
+    CHECK((!skins[1].child && skins[1].adult));
+    CHECK(CoopPuppet::PackSkins(R"({"skins": []})").empty());
+    CHECK(CoopPuppet::PackSkins(R"({"actors": []})").empty());
+    // A pack with skins only has no tunic colours.
+    CHECK_FALSE(CoopPuppet::PackHasTunicPuppets(manifest));
+    CHECK(CoopPuppet::PackHasTunicPuppets(R"({"actors": [{"actor": "CoopPuppet_Adult_Skin_Malon"},
+        {"actor": "CoopPuppet_Child_Red"}]})"));
+
+    CoopPuppet::PlannerSettings s;
+    s.skins = skins;
+    CoopPuppet::Planner p(s);
+    CHECK(p.ActorFor(true, 0xFF3030u, "Malon", "aa11") == "CoopPuppet_Adult_Skin_Malon");
+    CHECK(p.ActorFor(false, 0xFF3030u, "malon", "aa11") == "CoopPuppet_Child_Skin_Malon");   // any case
+    CHECK(p.ActorFor(true, 0xFF3030u, "Malon", "other") == "CoopPuppet_Adult_Red");          // another version
+    CHECK(p.ActorFor(true, 0xFF3030u, "Saria", "aa11") == "CoopPuppet_Adult_Red");           // not in this pack
+    CHECK(p.ActorFor(false, 0xFF3030u, "Zelda", "bb22") == "CoopPuppet_Child_Red");          // no child Zelda
+    CHECK(p.ActorFor(true, 0xFF3030u, "Zelda", "bb22") == "CoopPuppet_Adult_Skin_Zelda");
+    CHECK(p.ActorFor(true, 0xFF3030u, "", "") == "CoopPuppet_Adult_Red");
+    // Failed here: Link in their colour.
+    p.SetFailedTunics({"CoopPuppet_Adult_Skin_Malon"});
+    CHECK(p.ActorFor(true, 0xFF3030u, "Malon", "aa11") == "CoopPuppet_Adult_Red");
+    CHECK(p.ActorFor(false, 0xFF3030u, "Malon", "aa11") == "CoopPuppet_Child_Skin_Malon");
+    // See everyone as Link.
+    p.SetEveryoneLink(true);
+    CHECK(p.ActorFor(true, 0xFF3030u, "Zelda", "bb22") == "CoopPuppet_Adult_Red");
+    p.SetEveryoneLink(false);
+
+    // The plan: a remote wearing the skin gets its puppet; in a quiet scene its quiet copy.
+    s.quiet_scenes = {"HyruleCastle"};
+    CoopPuppet::Planner q(s);
+    std::vector<CoopPuppet::Remote> remotes(1);
+    remotes[0].number = 2;
+    remotes[0].adult = true;
+    remotes[0].color = 0xFF3030u;
+    remotes[0].skin = "Zelda";
+    remotes[0].skin_sha256 = "bb22";
+    for (const char* scene : {"Kakariko", "HyruleCastle"}) {
+        remotes[0].scene = scene;
+        const auto in = q.Plan(0x8000000, std::string(scene), CoopPuppet::Vec3{0, 0, 0}, false, remotes, 1000);
+        REQUIRE(in.targets.size() == 1);
+        CHECK(in.targets[0].actor == (std::string(scene) == "HyruleCastle" ? "CoopPuppet_AdultQuiet_Skin_Zelda"
+                                                                           : "CoopPuppet_Adult_Skin_Zelda"));
+    }
+}

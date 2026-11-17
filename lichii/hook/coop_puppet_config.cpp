@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_puppet_config.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace CoopPuppetConfig {
@@ -24,6 +25,8 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
         settings.actor = std::move(actor);
     }
     settings.native_player = On(env("LICHII_COOP_NATIVE_PLAYER"));
+    // Customize Link's "See everyone as Link" (coop-options.ini): no custom model on any puppet.
+    settings.everyone_link = On(env("LICHII_COOP_SEE_LINK"));
     bool pack_plain = false;
     if (const auto tunics = env("LICHII_COOP_TUNICS"); tunics == "0" || tunics == "off") {
         settings.tunics = false;
@@ -86,6 +89,8 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
 
 #ifdef LICHII_COOP
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -93,6 +98,7 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
 
 #include "common/fs/path_util.h"
 #include "common/logging.h"
+#include "coop_mod_data.h"
 
 namespace CoopPuppetConfig {
 namespace {
@@ -183,6 +189,19 @@ CoopPuppet::LookItems PackBlades() {
     return {};
 }
 
+// Every manifest's skins, the first of each id.
+std::vector<CoopPuppet::PackSkin> PackSkinList() {
+    std::vector<CoopPuppet::PackSkin> out;
+    for (const auto& text : PackManifests()) {
+        for (auto& sk : CoopPuppet::PackSkins(text)) {
+            if (std::none_of(out.begin(), out.end(), [&](const CoopPuppet::PackSkin& o) { return o.id == sk.id; })) {
+                out.push_back(std::move(sk));
+            }
+        }
+    }
+    return out;
+}
+
 // The first manifest with item copies.
 CoopPuppet::LookItems PackLook() {
     for (const auto& text : PackManifests()) {
@@ -196,6 +215,72 @@ CoopPuppet::LookItems PackLook() {
 }  // namespace
 
 bool HasPack() { return !PackManifests().empty(); }
+
+std::string PutSelfSkin(const std::string& id) {
+    // As the kit's Set-KitSelfSkin (kit-paths.ps1), for a pick made in the game: a restart from the menu does
+    // not run the kit's launcher. Every pack folder: its coop_skin_self/<id>/Player_<Age>.pack.zs over
+    // romfs/Pack/Actor/Player_<Age>.pack.zs, every other skin's copy taken away first. The id is checked
+    // (1-20 letters or digits), so it never names a path outside the pack.
+    const bool ok_id = !id.empty() && id.size() <= 20 &&
+                       std::all_of(id.begin(), id.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0; });
+    std::string put;
+    std::error_code ec;
+    const auto title = Common::FS::GetEdenPath(Common::FS::EdenPath::LoadDir) / "0400486024DEC000";
+    for (const auto& mod : std::filesystem::directory_iterator(title, ec)) {
+        const auto pack = mod.path();
+        if (!std::filesystem::exists(pack / "coop_puppet.json", ec)) {
+            continue;
+        }
+        for (const char* age : {"Adult", "Child"}) {
+            const auto dst = pack / "romfs" / "Pack" / "Actor" / (std::string("Player_") + age + ".pack.zs");
+            std::filesystem::path src;
+            if (ok_id) {
+                // The folder's own spelling of the id (the pick may differ in case).
+                for (const auto& d : std::filesystem::directory_iterator(pack / "coop_skin_self", ec)) {
+                    const std::string name = d.path().filename().string();
+                    if (name.size() == id.size() &&
+                        std::equal(name.begin(), name.end(), id.begin(), [](char a, char b) {
+                            return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+                        })) {
+                        src = d.path() / (std::string("Player_") + age + ".pack.zs");
+                        put = name;
+                    }
+                }
+            }
+            std::error_code e2;
+            if (!src.empty() && std::filesystem::is_regular_file(src, e2)) {
+                std::filesystem::create_directories(dst.parent_path(), e2);
+                std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, e2);
+            } else {
+                std::filesystem::remove(dst, e2);
+            }
+        }
+    }
+    LOG_INFO(Core, "coop: skin: your own Link {} from the next start", put.empty() ? std::string("is Link") : "wears " + put);
+    return put;
+}
+
+std::vector<CoopPuppet::PackSkin> Skins() { return PackSkinList(); }
+
+std::string ShareOwnSkin(const std::string& id) {
+    // The skin's hash as this pack has it: the others show it only when theirs is the same.
+    std::string sha;
+    std::string spelled;
+    if (!id.empty()) {
+        for (const auto& sk : PackSkinList()) {
+            if (sk.id.size() == id.size() &&
+                std::equal(sk.id.begin(), sk.id.end(), id.begin(), [](char a, char b) {
+                    return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+                })) {
+                sha = sk.sha256;
+                spelled = sk.id;
+            }
+        }
+    }
+    CoopModData::Set("coop", "skin", CoopModData::SkinValue(spelled, sha));
+    LOG_INFO(Core, "coop: skin: the others see you as {}", spelled.empty() ? std::string("Link") : spelled);
+    return spelled;
+}
 
 void Configure(bool perceived_safe) {
     std::vector<std::string> lines;
@@ -231,9 +316,22 @@ void Configure(bool perceived_safe) {
                             "MB is not free): quiet puppets everywhere, enemies see only their own Link");
         }
     }
+    if (settings.actor.empty() && !settings.native_player) {
+        settings.skins = PackSkinList();
+        if (!settings.skins.empty()) {
+            std::string names;
+            for (const auto& sk : settings.skins) {
+                names += (names.empty() ? "" : ", ") + sk.id;
+            }
+            lines.push_back("coop: skin: the puppet pack has custom models " + names +
+                            (settings.everyone_link ? " (you see everyone as Link: LICHII_COOP_SEE_LINK)" : ""));
+        }
+    }
     for (const auto& line : lines) {
         LOG_INFO(Core, "{}", line);
     }
+    // The skin we wear (Customize Link, LICHII_COOP_SKIN) for the others, over the mod-data channel.
+    ShareOwnSkin(Env("LICHII_COOP_SKIN"));
     // docs/puppet.md names LICHII_COOP_DEBUG_EQUIP for the equipment slots; the
     // switch the code has is LICHII_COOP_DEBUG_PUPPET (the same lines). Either
     // turns them on.

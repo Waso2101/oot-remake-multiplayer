@@ -155,3 +155,13 @@ TEST_CASE("puppet config: the pack's item copies, unless LICHII_COOP_LOOK_ITEMS=
     s = CoopPuppetConfig::Settings(env(""), [] { return false; }, nullptr);
     CHECK(s.look_copies == 0);
 }
+
+TEST_CASE("puppet config: LICHII_COOP_SEE_LINK sees everyone as Link") {
+    const auto env = [](std::string value) {
+        return [value](const char* name) { return std::string(name) == "LICHII_COOP_SEE_LINK" ? value : std::string(); };
+    };
+    const auto green = [] { return false; };
+    CHECK(CoopPuppetConfig::Settings(env("1"), green, nullptr).everyone_link);
+    CHECK_FALSE(CoopPuppetConfig::Settings(env("0"), green, nullptr).everyone_link);
+    CHECK_FALSE(CoopPuppetConfig::Settings(env(""), green, nullptr).everyone_link);
+}

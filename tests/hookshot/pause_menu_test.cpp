@@ -670,10 +670,13 @@ TEST_CASE("pause tab: Customize Link opens the customizer, its changes are asked
     CHECK(m.page() == Page::kCustomize);
     View v = m.view();
     CHECK(v.rows[0].kind == RowKind::kHeading);
-    CHECK(v.rows[0].name == "Tunic");
-    CHECK(Selected(m) == "Kokiri Tunic");
+    CHECK(v.rows[0].name == "Game characters");
+    CHECK(Selected(m) == "Link");
     CHECK_FALSE(m.Picture().empty());
     CHECK_FALSE(m.TakeRequest());
+    m.Press(Input::kDown);    // See everyone as Link (no custom model: the note is passed)
+    m.Press(Input::kDown);
+    CHECK(Selected(m) == "Kokiri Tunic");
     m.Press(Input::kRight);   // the tunic: red
     const auto r = m.TakeRequest();
     REQUIRE(r);
@@ -682,12 +685,32 @@ TEST_CASE("pause tab: Customize Link opens the customizer, its changes are asked
     CHECK(m.look()[CoopLook::Part::boots] == 0x112233u);   // the rest as it was worn
     CHECK(m.options().colour == "red");                     // the Settings page's row agrees
     // The mouse: a click on a part's right half.
-    m.Click(2, 1);   // Goron Tunic
+    m.Click(7, 1);   // Goron Tunic
     CHECK(m.look()[CoopLook::Part::goron_tunic] == CoopColors::Parse("red"));
     m.Press(Input::kBack);
     CHECK(m.page() == Page::kMain);
     CHECK(Selected(m) == "Customize Link");
     CHECK(m.Picture().empty());
+}
+
+TEST_CASE("pause tab: Customize Link's Characters rows ask the module to wear a custom model") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    m.Show(o);
+    m.SetCharacters({{"Malon", true, true}}, {"", false});
+    SelectRow(m, "Customize Link");
+    m.Press(Input::kDecide);
+    m.Press(Input::kDown);    // Malon
+    CHECK(Selected(m) == "Malon");
+    m.Press(Input::kDecide);
+    const auto r = m.TakeRequest();
+    REQUIRE(r);
+    CHECK(r->kind == Request::Kind::kCharacter);
+    CHECK(m.character().id == "Malon");
+    m.Press(Input::kBack);
+    SelectRow(m, "Customize Link");
+    m.Press(Input::kDecide);  // opens again on the pick worn
+    CHECK(m.view().rows[3].value == "Wearing");
 }
 
 TEST_CASE("pause tab: Settings: the Microphone row, Default and the microphones listed, saved by name") {
