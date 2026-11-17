@@ -2169,11 +2169,14 @@ class FullBuildTest(unittest.TestCase):
                         skins=[("Bad", bad), ("Good", good)], test_skin="bad", look_slots=0)
 
     def test_reader_has_is_exact(self):
-        # A .nup's "does the game have this file": an exact name, never a glob pattern.
-        class Reader:
+        # A .nup's "does the game have this file": an exact name, never a glob pattern. Through the reader
+        # build.py really gets (hud.NupReader around the .nup), not a stand-in of its own.
+        from puppet_pack import hud
+
+        class Nup:
             def listdir(self, d):
                 return {"Model": {"A[1].bfres.zs": ("f", 0), "Sub": ("d", 1)}}.get(d, {})
-        r = Reader()
+        r = hud.NupReader(Nup())
         self.assertTrue(build._reader_has(r, "Model/A[1].bfres.zs"))
         self.assertFalse(build._reader_has(r, "Model/A*.bfres.zs"))
         self.assertFalse(build._reader_has(r, "Model/Sub"))

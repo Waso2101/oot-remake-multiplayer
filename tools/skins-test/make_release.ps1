@@ -29,10 +29,10 @@ if (& git -C $repo status --porcelain --untracked-files=no) { throw 'The repo ha
 $dll = Get-ChildItem -LiteralPath $BuildDir -Recurse -File -Filter 'hookshot_coop.dll' | Where-Object { $_.FullName -match '\\Release\\' } | Select-Object -First 1
 $srv = Get-ChildItem -LiteralPath $BuildDir -Recurse -File -Filter 'coop_server.exe' | Where-Object { $_.FullName -match '\\Release\\' } | Select-Object -First 1
 if (-not $dll -or -not $srv) { throw "No Release hookshot_coop.dll / coop_server.exe under $BuildDir" }
+# (built after the last commit that changed compiled code; a change to scripts or the pack tool needs no new build)
+$codeTime = (Get-Date ((& git -C $repo log -1 --format=%cI HEAD -- coop hookshot lichii server CMakeLists.txt cmake).Trim())).ToUniversalTime()
 foreach ($f in @($dll, $srv)) {
-    if ($f.LastWriteTimeUtc -lt (Get-Date ((& git -C $repo log -1 --format=%cI HEAD).Trim())).ToUniversalTime()) {
-        throw "$($f.Name) is older than the last commit: build again first."
-    }
+    if ($f.LastWriteTimeUtc -lt $codeTime) { throw "$($f.Name) is older than the last change to the module or server code: build again first." }
 }
 
 $folder = Join-Path $OutDir 'custom-models-test'

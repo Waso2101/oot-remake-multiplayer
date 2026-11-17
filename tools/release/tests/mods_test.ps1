@@ -232,6 +232,13 @@ try {
     $script:calls = @()
     $said = @(& { $script:r = Invoke-KitPackBuild $fake @() } 6>&1 | ForEach-Object { "$_" })
     Check ($script:r.Code -eq 0 -and $script:calls.Count -eq 1 -and $script:calls[0] -eq '' -and $said.Count -eq 0) 'pack build: no model: the pack tool once, as before'
+    # The pack tool succeeds but left a skin out itself ("skin <ID>: left out: ..."): not counted as built.
+    $fake4 = {
+        param([string[]]$Extra)
+        return @{ Code = 0; Lines = @('  skin Malon: left out: AttributeError: something', '    skin mal: left out: broken', 'done') }
+    }
+    $said = @(& { $script:r = Invoke-KitPackBuild $fake4 $skins } 6>&1 | ForEach-Object { "$_" })
+    Check ($script:r.Code -eq 0 -and ($script:r.Built -join ',') -eq 'BAD' -and ($script:r.Left -join ',') -eq 'Malon,Mal') "pack build: a skin the pack tool left out is not built [$($script:r.Built -join ',') / $($script:r.Left -join ',')]"
 } finally {
     Remove-Item -LiteralPath $cm -Recurse -Force -ErrorAction SilentlyContinue
 }

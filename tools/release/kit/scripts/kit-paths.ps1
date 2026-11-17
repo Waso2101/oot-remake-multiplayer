@@ -1274,7 +1274,15 @@ function Invoke-KitPackBuild([scriptblock]$Run, [object[]]$Skins) {
         $left += $badIds
         $use = @($use | Where-Object { $badIds -notcontains $_.Id })
     }
-    $built = if ($code -eq 0) { @($use | ForEach-Object { $_.Id }) } else { @() }
+    $built = @()
+    if ($code -eq 0) {
+        # The pack tool itself leaves out a skin it cannot build ("skin <ID>: left out: ...") and still succeeds.
+        $out = @($r.Lines | ForEach-Object { "$_".Trim() })
+        foreach ($s in $use) {
+            if ($out | Where-Object { $_ -match ('(?i)^skin ' + [regex]::Escape($s.Id) + ': left out') }) { $left += $s.Id }
+            else { $built += $s.Id }
+        }
+    }
     return @{ Code = $code; Built = $built; Left = $left }
 }
 

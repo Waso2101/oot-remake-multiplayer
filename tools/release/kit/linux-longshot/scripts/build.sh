@@ -332,7 +332,14 @@ pack_run() {   # pack_run ID...: the pack tool with these models; its lines show
 pack_build() {   # pack_build: 0 when the pack was made (with the models it could build)
     local use=(${skins[@]+"${skins[@]}"}) err id bad keep rest
     while :; do
-        pack_run ${use[@]+"${use[@]}"} && { ((${#use[@]})) && say "  custom models in the puppet pack: ${use[*]}"; return 0; }
+        if pack_run ${use[@]+"${use[@]}"}; then
+            keep=()   # (the pack tool leaves out a skin it cannot build, "skin <ID>: left out: ...", and still succeeds)
+            for id in ${use[@]+"${use[@]}"}; do
+                grep -qiE "^skin $id: left out" "$pack_out" || keep+=("$id")
+            done
+            ((${#keep[@]})) && say "  custom models in the puppet pack: ${keep[*]}"
+            return 0
+        fi
         ((${#use[@]})) || return 1
         err=$(grep -E '^error:' "$pack_out" | tail -n 1 || true)
         [[ -n $err ]] || err=$(grep -vE '^[[:space:]]*$' "$pack_out" | tail -n 1 || true)
