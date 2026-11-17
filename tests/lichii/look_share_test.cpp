@@ -4,6 +4,7 @@
 
 #include "coop/net/client.hpp"
 #include "coop_look_share.h"
+#include "coop_mod_data.h"
 #include "coop_puppet.h"
 
 using coop::net::Event;
@@ -281,4 +282,40 @@ TEST_CASE("look share: a look with no gear set at start goes out, and the other 
     CHECK(theirs.SlotOf(2) == 1u);
     ours.OnEvent(Kind(EventKind::player_joined, 3));
     CHECK(ours.TakeSend());                    // and again for a late joiner
+}
+
+TEST_CASE("mod data: ours goes out when it changes and again after a reconnect, theirs is kept per player") {
+    CoopModData::Store s;
+    CHECK(s.TakeSend(0).empty());
+    CHECK(s.Set("coop", "skin", CoopModData::Bytes{1, 2}));
+    CHECK_FALSE(s.Set("Coop", "skin", {1}));                       // not a mod id
+    CHECK_FALSE(s.Set("coop", "skin", CoopModData::Bytes(65, 1)));  // too long
+    auto sent = s.TakeSend(1000);
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].mod_id == "coop");
+    CHECK(sent[0].value == CoopModData::Bytes{1, 2});
+    CHECK(s.TakeSend(5000).empty());                              // once
+    s.Set("coop", "skin", CoopModData::Bytes{1, 2});              // the same: nothing new
+    CHECK(s.TakeSend(6000).empty());
+    s.Set("coop", "skin", CoopModData::Bytes{3});
+    CHECK(s.TakeSend(6100).size() == 1);                          // the last send was long ago
+    s.Set("coop", "skin", CoopModData::Bytes{4});
+    CHECK(s.TakeSend(6200).empty());                              // not within 250 ms of the last send
+    CHECK(s.TakeSend(6400).size() == 1);
+    s.OnEvent(Kind(EventKind::reconnected));                      // the server may have lost it
+    CHECK(s.TakeSend(7000).size() == 1);
+    s.Set("coop", "skin", {});                                    // cleared: an empty value goes out
+    sent = s.TakeSend(8000);
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].value.empty());
+
+    Event e;
+    e.kind = EventKind::message;
+    e.message = coop::protocol::ModData{2, "coop", "skin", {9}};
+    CHECK(s.OnEvent(e));
+    CHECK_FALSE(s.OnEvent(e));                                    // the same again: no change
+    CHECK(s.Of(2, "coop", "skin") == CoopModData::Bytes{9});
+    CHECK_FALSE(s.Of(3, "coop", "skin"));
+    CHECK(s.OnEvent(Kind(EventKind::player_left, 2)));
+    CHECK_FALSE(s.Of(2, "coop", "skin"));
 }

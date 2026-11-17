@@ -555,6 +555,10 @@ Types 490 to 499 (modloader-b; 490 and 491 used). Both on the session channel, f
 
 A build without protocol 11 does not know 490 and 491; all players need the same release.
 
+### Mod data (`MOD_DATA`, issue 250 (1))
+
+Type 492, on the session channel, from any player. A small value a mod gives the other players' copies of the same mod, under a key of its own: u8 player (0 from the sender, its number relayed), str mod id (as `MOD_LIST`), str key (1 to 32 of `a-z 0-9 _`), u8 length (0 to 64), then the value's bytes. An empty value clears the key. The server writes the sender's number, keeps the newest value per player, mod and key, relays it to the others, gives a joiner everyone's (after the mod lists), and drops a player's values when it leaves; it never reads the bytes. Limits per player: 8 keys per mod, 16 mods, 4 sends a second (more are dropped, `mod_data_refused`). The client (`lichii/hook/coop_mod_data.*`) sends only a changed value, at most every 250 ms, and all of its values again after a reconnect.
+
 ### Lobby (protocol 11, `LOBBY_ACTION`, `LOBBY_MUTES`, `LOBBY_RESULT`)
 
 Types 510 to 519 (lobby-b; 510 to 512 used). All three on the session channel. The host's moderation from the Lobby tab and the chat commands (play-online.md, "Lobby"); the server carries out every one of them and takes them from the host only, so no game can moderate by itself. A player's own mutes never reach the wire.
