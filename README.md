@@ -1,5 +1,12 @@
 <p align="center"><img src="docs/images/squadala-logo.jpg" alt="Squadala! logo: a Korok holding a propeller leaf, with a blue, a red, an orange and a green fairy" width="320"></p>
 
+> **This is Waso2101's fork: the custom models test (play as Malon, Zelda, ... in co-op).**
+> Not an official Squadala release. Get the test zip from this fork's **Releases** page, unzip it into
+> a Squadala v0.11.4 kit folder and run `Install-CustomModels.bat` (`Remove-CustomModels.bat` undoes it).
+> How it works and what's still missing: [tools/skins-test/README.txt](tools/skins-test/README.txt),
+> [docs/puppet.md, "Custom models"](docs/puppet.md#custom-models). Upstream: [daurosk/oot-remake-multiplayer](https://github.com/daurosk/oot-remake-multiplayer)
+> (issue 250, PR 254).
+
 # Squadala!
 
 Squadala! - online co-op for the Ocarina of Time remake on PC. (The repository keeps its name, `oot-remake-multiplayer`.)
