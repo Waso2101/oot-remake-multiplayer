@@ -27,7 +27,8 @@
 #    build after a co-op update compiles only what changed).
 # 4. Co-op into the game folder: hookshot_coop.dll beside longshot.exe, coop.ini (server and name,
 #    from this kit's emulator\user\config\coop.ini when you have one), coop-options.ini, and the
-#    puppet pack (built from your game) in the game's mods folder.
+#    puppet pack (built from your game, with the custom character models in coop-models beside the mods folder)
+#    in the game's mods folder.
 # Steps 1 to 3 are skipped when the tools, pin and patches are the ones the game was built with,
 # so after Update.bat a run only does step 4 (a few minutes) unless the update moved the pin.
 # When only the patches changed, step 2 puts the files the old ones changed back and applies the new
@@ -226,12 +227,32 @@ function Invoke-PuppetPackStep([string]$exeDir) {
     }
     if ($packFrom -and (Test-Path -LiteralPath $packFrom) -and (Test-Path -LiteralPath $packTool)) {
         Write-Host '  Making the puppet pack (how you see the other players; about a minute) ...'
+        # Custom character models (coop-models beside the game's mods folder, never inside it): one --skin each. A model
+        # the pack tool cannot build is left out (Invoke-KitPackBuild), so one bad import never stops the game.
+        $models = Get-KitModelsDir $exeDir
+        $found = Get-KitModelSkins $models
+        foreach ($n in $found.Skipped) {
+            Write-Host "  custom model folder ""$n"" left out: a model's folder name is 1 to 20 letters or digits ($models)" -ForegroundColor Yellow
+        }
+        if ($found.Skins) { Write-Host "  Custom models: $(@($found.Skins | ForEach-Object { $_.Id }) -join ', ')" }
+        $modelsHash = Get-KitModelsHash $models
+        Remove-Item -LiteralPath (Join-Path $mod 'coop-models.txt') -Force -ErrorAction SilentlyContinue
         $ErrorActionPreference = 'Continue'
         # (no --title-rows: the title stays the game's own; co-op is the pause menu's Multiplayer tab)
-        & $python -I -B $packTool --romfs $packFrom --mod-dir $mod 2>&1 | ForEach-Object { Write-Host "    $_" }
-        $code = $LASTEXITCODE
+        $run = {
+            param([string[]]$Extra)
+            $lines = @(& $python -I -B $packTool --romfs $packFrom --mod-dir $mod @Extra 2>&1 | ForEach-Object { $l = "$_"; Write-Host "    $l"; $l })
+            return @{ Code = $LASTEXITCODE; Lines = $lines }
+        }
+        $built = Invoke-KitPackBuild $run @($found.Skins)
+        $code = $built.Code
         $made = $true
         $ErrorActionPreference = 'Stop'
+        if ($code -eq 0) {
+            # (every model folder there, also one left out: the pack is made again only when the models change)
+            Save-KitModelsStamp $mod $modelsHash
+            if ($built.Built) { Write-Host "  Custom models in the puppet pack: $($built.Built -join ', ')" }
+        }
         if ($code -eq 0) { Remove-Item -LiteralPath (Join-Path $hs 'pack-asked.txt') -Force -ErrorAction SilentlyContinue }
         if ($code -ne 0) { Write-Host '  The puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.' -ForegroundColor Yellow }
     } else {
@@ -434,7 +455,7 @@ if (-not $Rebuild -and -not $CheckOnly -and $Out -ieq $defaultOut -and -not (Fin
 # The game built for another Longshot release or commit (a kit gone back to an older version, Revert.bat): when this
 # PC's game cache (Find-KitHookshotCachedGame) holds a build made from exactly this kit's release, pin and patches,
 # it is copied over the game instead of building it again (15 to 45 minutes). Never copied: the player's files
-# (saves, user\, mods\ with the puppet pack, coop.ini, coop-options.ini, longshot_options.ini, logs) and the romfs link.
+# (saves, user\, mods\ with the puppet pack, coop-models\, coop.ini, coop-options.ini, longshot_options.ini, logs) and the romfs link.
 $oldStamp = Join-Path $Out 'coop-built-from.txt'
 if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and (Test-Path -LiteralPath $oldStamp)) {
     $base = { param($s) (@("$s" -replace "`r", '' -split "`n") | Where-Object { $_ -match '^(release|commit)=' }) -join "`n" }
@@ -445,7 +466,8 @@ if (-not $Rebuild -and -not $CheckOnly -and (Find-HookshotExe $Out) -and (Test-P
         if ($from -and (& $flat $from) -ne (& $flat $Out)) { $from = '' }
         if ($from) {
             Step "The game: copying the build of this version from the game cache on this PC ($from), instead of building it again"
-            $xd = @('user', 'save', 'autotest-save', 'mods') | ForEach-Object { Join-Path $from $_ }
+            # (and the player's custom character models, coop-models beside mods: never another game's)
+            $xd = @('user', 'save', 'autotest-save', 'mods', 'coop-models', 'bin\coop-models') | ForEach-Object { Join-Path $from $_ }
             # (its build stamp last: a copy that stops half way leaves the old stamp, and the game is built again)
             $xf = @('hookshot_coop.dll', 'coop.ini', 'coop-options.ini', 'longshot_log.txt', 'longshot_log.old.txt', 'control.json', 'longshot_options.ini', 'language.txt',
                 'coop-built-from.txt') | ForEach-Object { Join-Path $from $_ }

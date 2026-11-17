@@ -743,6 +743,21 @@ try {
     Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a pack the kit would make again -> module'
     Write-File $pack '{"sound": true, "tunics": {"red": ["x"]}}'
     Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: up to date again'
+    # custom character models in coop-models beside the game's mods folder: the pack made again when they change
+    $cmDir = Join-Path $g 'coop-models'
+    Write-File (Join-Path $cmDir 'Malon\romfs\Pack\Actor\Player_Adult.pack.zs') 'model'
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a custom model added -> module (the pack is made again)'
+    Save-KitModelsStamp (Split-Path -Parent $pack) (Get-KitModelsHash $cmDir)
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: the pack made with that model -> nothing (not made again at every start)'
+    Write-File (Join-Path $cmDir 'bad name\romfs\x') 'x'
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: a folder whose name is no ID -> nothing (it is never built)'
+    Write-File (Join-Path $cmDir 'Malon\romfs\Pack\Actor\Player_Adult.pack.zs') 'model, changed'
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: a custom model changed -> module'
+    Save-KitModelsStamp (Split-Path -Parent $pack) (Get-KitModelsHash $cmDir)
+    Remove-Item -LiteralPath $cmDir -Recurse -Force
+    Check ((Get-KitHookshotNeed $hk) -eq 'module') 'hookshot need: the custom models removed -> module'
+    Save-KitModelsStamp (Split-Path -Parent $pack) (Get-KitModelsHash $cmDir)
+    Check ((Get-KitHookshotNeed $hk) -eq '') 'hookshot need: no models and no stamp -> nothing'
     # the randomizer the kit brings (hookshot\OOTRR.txt): fetched into the game's tools\ootrr by the module step
     $osha = 'a' * 64
     $offlineWas = $env:OOT_COOP_OFFLINE

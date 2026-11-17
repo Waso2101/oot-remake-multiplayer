@@ -293,6 +293,71 @@ mod=$GAME/mods/contents/0400486024DEC000/coop-puppet
 # (the pack tool's own files too: a pack made by another version of the tool is made again, as the
 # Windows kit's Test-KitPuppetPackStale does; the look files and the copies' marks change with it)
 pack_stamp="$src_stamp tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
+# Custom character models (skins): model mods the player imported (the game's Customize Link page copies them) live in
+# data/game/coop-models/<ID>/, beside the game's mods folder and never in it (a model mod replaces Link's own files, and
+# its size table would hide the puppets). Each folder whose name is an ID (1 to 20 letters or digits) goes to the pack
+# tool as --skin <ID>=<folder>; others are left out with a line ('.' and '_' folders quietly). As the Windows kit's
+# Get-KitModelSkins and Get-KitModelsHash: the models' file paths, sizes and times (not their contents, hundreds of MB)
+# go into the pack's stamp, so adding, removing or changing a model makes the pack again once.
+models=$GAME/coop-models
+skins=()
+if [[ -d $models ]]; then
+    while IFS= read -r m; do
+        [[ -n $m && $m != .* && $m != _* ]] || continue
+        if [[ $m =~ ^[A-Za-z0-9]{1,20}$ ]]; then skins+=("$m")
+        else warn "custom model folder \"$m\" left out: a model's folder name is 1 to 20 letters or digits ($models)"
+        fi
+    done < <(find "$models" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | LC_ALL=C sort)
+fi
+models_sum=''
+if ((${#skins[@]})); then
+    models_sum=$(for m in "${skins[@]}"; do
+        printf '%s/\n' "$m"
+        find "$models/$m" -type f -printf "$m/%P|%s|%T@\n" 2>/dev/null | LC_ALL=C sort
+    done | sha256sum | cut -d' ' -f1)
+fi
+# (no models: the stamp is the one before models, so a kit without any keeps its pack)
+pack_want="$pack_stamp${models_sum:+ models:$models_sum}"
+# The pack tool with every model; a model it cannot build is left out and the pack made again, so one bad import never
+# stops the game (as the Windows kit's Invoke-KitPackBuild): the failed run's last "error:" line (else its last line)
+# names the model by its folder or its ID; one that names none is made again without any model.
+pack_out=$DATA/pack-tool.txt
+pack_run() {   # pack_run ID...: the pack tool with these models; its lines shown and kept in $pack_out
+    local a=() id
+    for id in "$@"; do a+=(--skin "$id=$models/$id"); done
+    "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows ${a[@]+"${a[@]}"} 2>&1 |
+        tee "$pack_out" | sed 's/^/    /'
+    return "${PIPESTATUS[0]}"
+}
+pack_build() {   # pack_build: 0 when the pack was made (with the models it could build)
+    local use=(${skins[@]+"${skins[@]}"}) err id bad keep rest
+    while :; do
+        pack_run ${use[@]+"${use[@]}"} && { ((${#use[@]})) && say "  custom models in the puppet pack: ${use[*]}"; return 0; }
+        ((${#use[@]})) || return 1
+        err=$(grep -E '^error:' "$pack_out" | tail -n 1 || true)
+        [[ -n $err ]] || err=$(grep -vE '^[[:space:]]*$' "$pack_out" | tail -n 1 || true)
+        err=${err#error: }
+        [[ -n $err ]] || err='the pack tool stopped'
+        bad=()
+        for id in "${use[@]}"; do   # (its folder named, not one whose name only starts with it)
+            rest=${err#*"$models/$id"}
+            [[ $rest != "$err" && ! $rest =~ ^[A-Za-z0-9] ]] && bad+=("$id")
+        done
+        if ((${#bad[@]} == 0)); then
+            for id in "${use[@]}"; do   # (its ID as a word; an ID is letters and digits only)
+                [[ ${err,,} =~ (^|[^a-z0-9])${id,,}([^a-z0-9]|$) ]] && bad+=("$id")
+            done
+        fi
+        ((${#bad[@]})) || bad=("${use[@]}")
+        keep=()
+        for id in "${use[@]}"; do
+            if [[ " ${bad[*]} " == *" $id "* ]]; then warn "custom model $id could not be built: $err; left out"
+            else keep+=("$id")
+            fi
+        done
+        use=(${keep[@]+"${keep[@]}"})
+    done
+}
 # A file the pack's manifest names that is gone (a pack tool stopped half way, a hand-copied pack): the look files
 # (coop_look/gear.bin, a colour's .bin) and each tunic's files, as the Windows kit's Get-KitPuppetPackGaps (pack-retry).
 pack_gap() {
@@ -332,7 +397,7 @@ find_pack_game() {
 # and the pack tool's hash), so a new game file or tool asks again; start-squadala.sh --pack removes it and asks.
 pack_asked=$DATA/pack-asked.txt
 ask_key="${pack_from:-}|${pack_stamp##* tool:}"
-if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $(pack_gap) ]]; then
+if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_want" && -z $(pack_gap) ]]; then
     found=$(find_pack_game)
     if [[ -n $found ]]; then
         say "  Found your game file: $found (saved in data/game-files.txt)"
@@ -357,13 +422,17 @@ if [[ ! -e ${pack_from:-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.co
     fi
 fi
 gap=$(pack_gap)
-if [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $gap ]]; then
+if [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_want" && -z $gap ]]; then
     say '  puppet pack: built already'
 elif [[ -n $pack_from && -e $pack_from ]]; then
     [[ -n $gap && -f $mod/coop_puppet.json ]] && say "  puppet pack: incomplete ($gap is missing): made again"
+    have=$(cat "$mod/.coop-stamp" 2>/dev/null || true)
+    [[ -f $mod/coop_puppet.json && -z $gap && ${have%% models:*} == "$pack_stamp" ]] && say '  puppet pack: your custom models (data/game/coop-models) changed: made again'
+    ((${#skins[@]})) && say "  custom models: ${skins[*]}"
     say '  Making the puppet pack (how you see the other players; about a minute) ...'
-    if "$PY" -I -B "$DATA/tools/puppet_pack/build.py" --romfs "$pack_from" --mod-dir "$mod" --title-rows 2>&1 | sed 's/^/    /'; then
-        printf '%s' "$pack_stamp" >"$mod/.coop-stamp"
+    if pack_build; then
+        # (every model folder there, also one left out: the pack is made again only when the models change)
+        printf '%s' "$pack_want" >"$mod/.coop-stamp"
         rm -f "$pack_asked"
     else
         rm -f "$mod/.coop-stamp"

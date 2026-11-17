@@ -939,7 +939,8 @@ function Get-KitHookshotStamp([string]$Kit) {
 #   'pin'     the kit moved to another Hookshot release or pin (a full game build, about 15 minutes)
 #   'patches' the co-op patches changed (the game built again, only what changed: a few minutes)
 #   'module'  the co-op module changed, or the puppet pack is missing or stale (co-op and the pack put in
-#             again: seconds to a minute; without a pack the other players cannot be shown), or the kit's
+#             again: seconds to a minute; without a pack the other players cannot be shown), or the custom
+#             character models in coop-models changed since the pack was made, or the kit's
 #             randomizer (hookshot\OOTRR.txt) is not in the game yet
 #   'offline' only the kit's randomizer is missing and this PC has no internet: the game starts as it is
 #             (play.ps1 says one line), the next start with internet puts it in
@@ -976,6 +977,8 @@ function Get-KitHookshotNeed([string]$Kit) {
     }
     $manifest = Join-Path $exeDir 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json'
     if (Test-KitPuppetPackStale $manifest (Join-Path $Kit 'tools\puppet_pack')) { return 'module' }
+    # (custom character models added, removed or changed in coop-models since the pack was made)
+    if (Test-KitModelsChanged (Split-Path -Parent $manifest) (Get-KitModelsDir $exeDir)) { return 'module' }
     if (Get-KitStaleRandoSeeds $exeDir) { return 'module' }   # (a seed built before the puppet pack: it would abort)
     if (Test-KitOotrrStale $Kit $exeDir) {
         # (an offline player: the module step would only try the OOTRR download again, on every start. Everything
@@ -1173,6 +1176,106 @@ function Update-KitRandoSeeds([string]$ExeDir, [string]$Ootrr = '') {
 function Test-KitPuppetPackStale([string]$Manifest, [string]$ToolDir) {
     if (-not (Test-Path -LiteralPath $Manifest)) { return $true }
     return [bool](Get-PuppetPackHint $Manifest $ToolDir)
+}
+
+# --- Custom character models ("skins") on the puppets -----------------------------------------------
+# Model mods the player imported (the game's Customize Link page copies them) live in coop-models beside the game's mods
+# folder, one folder per model: <exe dir>\coop-models\<ID>\romfs\... (in the kit: hookshot\game\bin\coop-models). Never
+# inside mods: a model mod replaces Link's own files, and its size table would hide the puppets. The pack tool builds each
+# one into the puppet pack (build.py --skin <ID>=<folder>), at the next start after the set of models changed.
+function Get-KitModelsDir([string]$ExeDir) { return (Join-Path $ExeDir 'coop-models') }
+
+# A model's ID is its folder's name: 1 to 20 letters or digits (the pack tool's rule; it goes into actor names).
+function Test-KitSkinId([string]$Id) { return [bool]($Id -cmatch '^[A-Za-z0-9]{1,20}$') }
+
+# The model folders in $Dir: @{ Skins = @(@{ Id; Path }, ...) in ordinal order of the ID; Skipped = @(<folder name>, ...) }.
+# A folder whose name is no ID is skipped (and said by the caller); one starting with '.' or '_' (a page's work folder,
+# as Longshot skips '_' folders in mods) is left out quietly. Files beside the folders are not models.
+function Get-KitModelSkins([string]$Dir) {
+    $skins = @()
+    $skipped = @()
+    if ($Dir -and (Test-Path -LiteralPath $Dir -PathType Container)) {
+        $names = [string[]]@(Get-ChildItem -LiteralPath $Dir -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+        [Array]::Sort($names, [StringComparer]::Ordinal)
+        foreach ($n in $names) {
+            if (-not $n -or $n.StartsWith('.') -or $n.StartsWith('_')) { continue }
+            if (Test-KitSkinId $n) { $skins += [pscustomobject]@{ Id = $n; Path = (Join-Path $Dir $n) } }
+            else { $skipped += $n }
+        }
+    }
+    return @{ Skins = $skins; Skipped = $skipped }
+}
+
+# What the models are, cheaply: SHA-256 over each model folder's files (its ID, then each file's path inside it, size
+# and time), not their contents (a model is hundreds of MB). '' when there is no model: a kit without any keeps its pack.
+function Get-KitModelsHash([string]$Dir) {
+    $skins = @((Get-KitModelSkins $Dir).Skins)
+    if (-not $skins) { return '' }
+    $text = New-Object System.Text.StringBuilder
+    foreach ($s in $skins) {
+        [void]$text.Append("$($s.Id)/`n")
+        $root = [System.IO.Path]::GetFullPath($s.Path).TrimEnd('\') + '\'
+        $files = @(Get-ChildItem -LiteralPath $s.Path -Recurse -File -ErrorAction SilentlyContinue)
+        $rows = [string[]]@($files | ForEach-Object {
+            "$($s.Id)/$($_.FullName.Substring($root.Length).Replace('\', '/'))|$($_.Length)|$($_.LastWriteTimeUtc.Ticks)"
+        })
+        [Array]::Sort($rows, [StringComparer]::Ordinal)
+        foreach ($r in $rows) { [void]$text.Append("$r`n") }
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text.ToString())) } finally { $sha.Dispose() }
+    return (-join ($bytes | ForEach-Object { $_.ToString('x2') }))
+}
+
+# The models the pack was last made with: their hash in coop-models.txt in the pack's folder (coop-puppet, which the
+# game's mod list treats as co-op's own), written after a pack was made. No file: made with no model.
+function Get-KitModelsStamp([string]$PackDir) {
+    $f = Join-Path $PackDir 'coop-models.txt'
+    if (-not (Test-Path -LiteralPath $f)) { return '' }
+    try { return "$([System.IO.File]::ReadAllText($f))".Trim() } catch { return '' }
+}
+function Save-KitModelsStamp([string]$PackDir, [string]$Hash) {
+    $f = Join-Path $PackDir 'coop-models.txt'
+    if ($Hash) { [System.IO.File]::WriteAllText($f, "$Hash`n") }
+    elseif (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+}
+
+# A model added, removed or changed since the pack was made: the pack is made again (once: the stamp holds every model
+# folder there, also one that could not be built, so a bad import is not tried again at every start).
+function Test-KitModelsChanged([string]$PackDir, [string]$ModelsDir) {
+    return (Get-KitModelsHash $ModelsDir) -ne (Get-KitModelsStamp $PackDir)
+}
+
+# Runs the pack tool with every model, and leaves out a model it cannot build: one bad import never stops the game.
+# $Run: param([string[]]$Extra) runs the pack tool with these arguments added and returns @{ Code; Lines }. $Skins: from
+# Get-KitModelSkins. A failed run's last "error:" line (else its last line) names the model by its folder or its ID;
+# that model is left out and the pack made again. A failure that names none is made again without any model; the
+# pack tool failing then too is not the models' doing. Returns @{ Code; Built = @(<ID>...); Left = @(<ID>...) }.
+function Invoke-KitPackBuild([scriptblock]$Run, [object[]]$Skins) {
+    $use = @($Skins | Where-Object { $_ })
+    $left = @()
+    $code = 1
+    for ($try = 0; $try -le @($Skins).Count; $try++) {
+        $extra = @()
+        foreach ($s in $use) { $extra += @('--skin', "$($s.Id)=$($s.Path)") }
+        $r = & $Run $extra
+        $code = [int]$r.Code
+        if ($code -eq 0 -or $use.Count -eq 0) { break }
+        $lines = @($r.Lines | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+        $err = "$(@($lines | Where-Object { $_ -match '^error:' }) | Select-Object -Last 1)"
+        if (-not $err) { $err = "$($lines | Select-Object -Last 1)" }
+        $err = $err -replace '^error:\s*', ''
+        if (-not $err) { $err = "the pack tool stopped (exit $code)" }
+        $bad = @($use | Where-Object { $err -match ('(?i)' + [regex]::Escape($_.Path) + '(?![A-Za-z0-9])') })
+        if (-not $bad) { $bad = @($use | Where-Object { $err -match ('(?i)(?<![A-Za-z0-9])' + [regex]::Escape($_.Id) + '(?![A-Za-z0-9])') }) }
+        if (-not $bad) { $bad = $use }
+        $badIds = @($bad | ForEach-Object { $_.Id })
+        foreach ($id in $badIds) { Write-Host "  custom model $id could not be built: $err; left out" -ForegroundColor Yellow }
+        $left += $badIds
+        $use = @($use | Where-Object { $badIds -notcontains $_.Id })
+    }
+    $built = if ($code -eq 0) { @($use | ForEach-Object { $_.Id }) } else { @() }
+    return @{ Code = $code; Built = $built; Left = $left }
 }
 
 # The line said before Build-Hookshot-Coop runs for that need ('game', 'moved' and 'pin' ask first:

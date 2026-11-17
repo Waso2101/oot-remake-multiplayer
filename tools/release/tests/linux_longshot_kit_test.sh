@@ -195,6 +195,55 @@ cp "$tmp/build.py.good" "$D/tools/puppet_pack/build.py"
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack5.txt" 2>&1; export CODE=$?
 check 'pack: the tool fixed: the next start makes the pack' bash -c '[ $CODE -eq 0 ] && grep -q "^puppet_pack" "$2" && [ -f "$3/.coop-stamp" ]' _ "$tmp/pack5.txt" "$log" "$P"
 
+# Custom character models (skins) in data/game/coop-models/<ID>: one --skin each, a folder whose name is no ID left out,
+# the pack made again once when the models change, and a model the pack tool cannot build left out (the start goes on).
+# The stand-in pack tool refuses the model BAD by its folder, and with SKIN_FAIL every model with a line naming none.
+cat >"$D/tools/puppet_pack/build.py" <<'EOF'
+import os, sys
+a = sys.argv[1:]
+with open(os.environ["FAKE_LOG"], "a") as f:
+    f.write("puppet_pack %s\n" % " ".join(a))
+for s in [a[i + 1] for i, x in enumerate(a) if x == "--skin"]:
+    sid, _, folder = s.partition("=")
+    if sid == "BAD":
+        print("error: %s is not a model mod (no changed Player_Adult or Player_Child pack)" % folder, file=sys.stderr)
+        sys.exit(1)
+    if os.environ.get("SKIN_FAIL"):
+        print("error: something else broke", file=sys.stderr)
+        sys.exit(1)
+d = a[a.index("--mod-dir") + 1]
+os.makedirs(d, exist_ok=True)
+open(os.path.join(d, "coop_puppet.json"), "w").write("{}")
+EOF
+CM=$D/game/coop-models
+mkdir -p "$CM/Malon/romfs/Pack/Actor" "$CM/BAD/romfs" "$CM/bad name" "$CM/_importing" "$CM/ThisNameIsFarTooLong123"
+printf 'model' >"$CM/Malon/romfs/Pack/Actor/Player_Adult.pack.zs"
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/skin1.txt" 2>&1; export CODE=$?
+check 'skins: each model folder goes to the pack tool as --skin <ID>=<folder>' bash -c 'grep -q -- "--skin BAD=.*/coop-models/BAD --skin Malon=.*/coop-models/Malon" "$2"' _ "$tmp/skin1.txt" "$log"
+check 'skins: a model the pack tool cannot build is left out by name, the pack made with the rest, the start goes on' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "custom model BAD could not be built: .*BAD is not a model mod.*; left out" "$1" && tail -n 1 "$2" | grep -q -- "--skin Malon=" && ! tail -n 1 "$2" | grep -q BAD && grep -q "custom models in the puppet pack: Malon" "$1"' _ "$tmp/skin1.txt" "$log"
+check 'skins: a folder whose name is no ID (a space, more than 20) is left out with a line; a _ folder quietly' \
+    bash -c 'grep -q "\"bad name\" left out" "$1" && grep -q "\"ThisNameIsFarTooLong123\" left out" "$1" && ! grep -q _importing "$1" && ! grep -q "_importing" "$2"' _ "$tmp/skin1.txt" "$log"
+check 'skins: the stamp holds the models (the one left out too)' bash -c 'grep -q " models:[0-9a-f]\{64\}$" "$1/.coop-stamp"' _ "$P"
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/skin2.txt" 2>&1; export CODE=$?
+check 'skins: no change: the pack is not made again (a bad import is not tried at every start)' bash -c '[ $CODE -eq 0 ] && grep -q "puppet pack: built already" "$1" && ! grep -q "^puppet_pack" "$2"' _ "$tmp/skin2.txt" "$log"
+printf 'model, changed' >"$CM/Malon/romfs/Pack/Actor/Player_Adult.pack.zs"
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/skin3.txt" 2>&1; export CODE=$?
+check 'skins: a model changed: made again once, said' bash -c '[ $CODE -eq 0 ] && grep -q "custom models (data/game/coop-models) changed: made again" "$1" && grep -q "^puppet_pack" "$2"' _ "$tmp/skin3.txt" "$log"
+mkdir -p "$CM/Zelda/romfs" && printf 'z' >"$CM/Zelda/romfs/x"
+SKIN_FAIL=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/skin4.txt" 2>&1; export CODE=$?
+check 'skins: a failure that names no model: made again without any, each model said' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "custom model Malon could not be built: something else broke; left out" "$1" && grep -q "custom model Zelda could not be built: something else broke; left out" "$1" && [ -f "$2/.coop-stamp" ]' _ "$tmp/skin4.txt" "$P"
+rm -rf "$CM"
+: >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/skin5.txt" 2>&1; export CODE=$?
+check 'skins: every model removed: made again without --skin, the stamp as before models' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "^puppet_pack" "$2" && ! grep -q -- "--skin" "$2" && ! grep -q " models:" "$3/.coop-stamp"' _ "$tmp/skin5.txt" "$log" "$P"
+cp "$tmp/build.py.good" "$D/tools/puppet_pack/build.py"
+
 # The randomizer the kit brings (data/longshot/OOTRR.txt): fetched and unpacked into data/game/tools/ootrr.
 mkdir -p "$tmp/ootrr-rel/ootrr-0.5.0-linux-x86_64"
 printf '#!/bin/sh\necho ootrr\n' >"$tmp/ootrr-rel/ootrr-0.5.0-linux-x86_64/ootrr"

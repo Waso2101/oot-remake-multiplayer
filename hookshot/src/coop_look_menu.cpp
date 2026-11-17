@@ -245,7 +245,7 @@ std::vector<Page::Line> Page::Lines() const {
     out.push_back({{"Link", worn(""), 0}, What::kCharacter, Part::tunic, "Link, the game's own model. " + when, ""});
     out.push_back({{"Custom models", "", 3}, What::kHeading, Part::tunic, ""});
     if (custom_.empty()) {
-        out.push_back({{"None in the puppet pack yet: put a model mod in the kit's coop-models folder and start again",
+        out.push_back({{"None in the puppet pack yet: put a model mod's folder (holding romfs) in the kit's hookshot\\game\\coop-models and start again",
                         "", 4},
                        What::kHeading, Part::tunic, ""});
     }
