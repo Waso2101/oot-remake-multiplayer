@@ -1733,7 +1733,7 @@ def main(argv=None):
 
 
 def _reader_has(reader, path):
-    """Whether a .nup's RomFS (hud.NupReader) has exactly this file (no pattern: a name with `[` or `*` is a name)."""
+    """Whether a hud reader's RomFS has exactly this file (no pattern: a name with `[` or `*` is a name)."""
     d, _, name = path.rpartition("/")
     return name in reader.files(d)
 
