@@ -1733,10 +1733,9 @@ def main(argv=None):
 
 
 def _reader_has(reader, path):
-    """Whether a .nup reader's RomFS has exactly this file (no pattern: a name with `[` or `*` is a name)."""
+    """Whether a hud reader's RomFS has exactly this file (no pattern: a name with `[` or `*` is a name)."""
     d, _, name = path.rpartition("/")
-    hit = reader.listdir(d).get(name)
-    return bool(hit) and hit[0] == "f"
+    return name in reader.files(d)
 
 
 def _main_build(a, romfs, hud_reader=None):

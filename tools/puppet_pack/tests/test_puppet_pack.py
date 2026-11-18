@@ -2169,15 +2169,24 @@ class FullBuildTest(unittest.TestCase):
                         skins=[("Bad", bad), ("Good", good)], test_skin="bad", look_slots=0)
 
     def test_reader_has_is_exact(self):
-        # A .nup's "does the game have this file": an exact name, never a glob pattern.
-        class Reader:
+        # "Does the game have this file": an exact name, never a glob pattern. Through the real readers the
+        # build is given (a stand-in reader once hid that the .nup one has no listdir, and every skin was left out).
+        from puppet_pack import hud
+
+        class Nup:
             def listdir(self, d):
-                return {"Model": {"A[1].bfres.zs": ("f", 0), "Sub": ("d", 1)}}.get(d, {})
-        r = Reader()
-        self.assertTrue(build._reader_has(r, "Model/A[1].bfres.zs"))
-        self.assertFalse(build._reader_has(r, "Model/A*.bfres.zs"))
-        self.assertFalse(build._reader_has(r, "Model/Sub"))
-        self.assertFalse(build._reader_has(r, "Nope/A.bfres.zs"))
+                if d not in ("Model",):
+                    raise KeyError(d)
+                return {"A[1].bfres.zs": ("f", 0), "Sub": ("d", 1)}
+        root = os.path.join(self.dir, "reader_romfs")
+        os.makedirs(os.path.join(root, "Model", "Sub"))
+        with open(os.path.join(root, "Model", "A[1].bfres.zs"), "wb") as f:
+            f.write(b"x")
+        for r in (hud.NupReader(Nup()), hud.DirReader(root)):
+            self.assertTrue(build._reader_has(r, "Model/A[1].bfres.zs"), r)
+            self.assertFalse(build._reader_has(r, "Model/A*.bfres.zs"), r)
+            self.assertFalse(build._reader_has(r, "Model/Sub"), r)
+            self.assertFalse(build._reader_has(r, "Nope/A.bfres.zs"), r)
 
     def test_skin_table_and_files(self):
         from puppet_pack import skin
